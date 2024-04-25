@@ -16,8 +16,8 @@
  */
 package org.apache.gluten.execution
 
-import org.apache.spark.{SPARK_VERSION_SHORT, SparkConf}
-import org.apache.spark.sql.{DataFrame, Row}
+import org.apache.spark.SparkConf
+import org.apache.spark.sql.{DataFrame, Row, TestUtils}
 import org.apache.spark.sql.execution.InputIteratorTransformer
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
 import org.apache.spark.sql.execution.aggregate.SortAggregateExec
@@ -38,11 +38,6 @@ class GlutenClickHouseTPCHBucketSuite
   override protected val tablesPath: String = basePath + "/tpch-data-ch"
   override protected val tpchQueries: String = rootPath + "queries/tpch-queries-ch"
   override protected val queriesResults: String = rootPath + "bucket-queries-output"
-
-  protected lazy val sparkVersion: String = {
-    val version = SPARK_VERSION_SHORT.split("\\.")
-    version(0) + "." + version(1)
-  }
 
   override protected def sparkConf: SparkConf = {
     super.sparkConf
@@ -587,11 +582,18 @@ class GlutenClickHouseTPCHBucketSuite
       assert(plans.size == expectedCount)
     }
 
-    def checkResult(df: DataFrame, exceptedResult: Array[Row]): Unit = {
+    def checkResult(df: DataFrame, exceptedResult: Seq[Row]): Unit = {
       // check the result
       val result = df.collect()
       assert(result.size == exceptedResult.size)
-      result.equals(exceptedResult)
+      val sortedRes = result.map {
+        s =>
+          Row.fromSeq(s.toSeq.map {
+            case a: mutable.WrappedArray[_] => a.sortBy(_.toString.toInt)
+            case o => o
+          })
+      }
+      TestUtils.compareAnswers(sortedRes, exceptedResult)
     }
 
     val SQL =
@@ -605,10 +607,10 @@ class GlutenClickHouseTPCHBucketSuite
         checkResult(
           df,
           Array(
-            Row(1, "N", mutable.WrappedArray.make(Array(3, 6, 1, 5, 2, 4))),
+            Row(1, "N", mutable.WrappedArray.make(Array(1, 2, 3, 4, 5, 6))),
             Row(2, "N", mutable.WrappedArray.make(Array(1))),
-            Row(3, "A", mutable.WrappedArray.make(Array(6, 4, 3))),
-            Row(3, "R", mutable.WrappedArray.make(Array(2, 5, 1))),
+            Row(3, "A", mutable.WrappedArray.make(Array(3, 4, 6))),
+            Row(3, "R", mutable.WrappedArray.make(Array(1, 2, 5))),
             Row(4, "N", mutable.WrappedArray.make(Array(1)))
           )
         )
@@ -650,11 +652,11 @@ class GlutenClickHouseTPCHBucketSuite
         checkResult(
           df,
           Array(
-            Row("A", 3, mutable.WrappedArray.make(Array(6, 4, 3))),
+            Row("A", 3, mutable.WrappedArray.make(Array(3, 4, 6))),
             Row("A", 5, mutable.WrappedArray.make(Array(3))),
             Row("A", 6, mutable.WrappedArray.make(Array(1))),
             Row("A", 33, mutable.WrappedArray.make(Array(1, 2, 3))),
-            Row("A", 37, mutable.WrappedArray.make(Array(2, 3, 1)))
+            Row("A", 37, mutable.WrappedArray.make(Array(1, 2, 3)))
           )
         )
         checkHashAggregateCount(df, 1)

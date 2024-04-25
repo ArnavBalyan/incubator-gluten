@@ -18,11 +18,10 @@ package org.apache.gluten.integration.tpc.action
 
 import org.apache.gluten.integration.stat.RamStat
 import org.apache.gluten.integration.tpc.{TpcRunner, TpcSuite}
-
 import org.apache.spark.sql.ConfUtils.ConfImplicits._
 import org.apache.spark.sql.SparkSessionSwitcher
-
 import org.apache.commons.lang3.exception.ExceptionUtils
+import org.apache.gluten.integration.tpc.action.Actions.QuerySelector
 
 import scala.collection.immutable.Map
 import scala.collection.mutable
@@ -30,11 +29,12 @@ import scala.collection.mutable.ArrayBuffer
 
 class Parameterized(
     scale: Double,
-    queryIds: Array[String],
-    excludedQueryIds: Array[String],
+    queries: QuerySelector,
+    explain: Boolean,
     iterations: Int,
     warmupIterations: Int,
     configDimensions: Seq[Dim],
+    excludedCombinations: Seq[Set[DimKv]],
     metrics: Array[String])
   extends Action {
 
@@ -70,6 +70,16 @@ class Parameterized(
         intermediateConf: Seq[(String, String)]): Unit = {
       if (dimOffset == dimCount) {
         // we got one coordinate
+        excludedCombinations.foreach {
+          ec: Set[DimKv] =>
+            if (ec.forall {
+              kv =>
+                intermediateCoordinates.contains(kv.k) && intermediateCoordinates(kv.k) == kv.v
+            }) {
+              println(s"Coordinate ${Coordinate(intermediateCoordinates)} excluded by $ec.")
+              return
+            }
+        }
         coordinateMap(Coordinate(intermediateCoordinates)) = intermediateConf
         return
       }
@@ -95,6 +105,11 @@ class Parameterized(
     val sessionSwitcher = tpcSuite.sessionSwitcher
     val testConf = tpcSuite.getTestConf()
 
+    println("Prepared coordinates: ")
+    coordinates.toList.map(_._1).zipWithIndex.foreach {
+      case (c, idx) =>
+        println(s"  $idx: $c")
+    }
     coordinates.foreach {
       entry =>
         // register one session per coordinate
@@ -105,7 +120,7 @@ class Parameterized(
         sessionSwitcher.registerSession(coordinate.toString, conf)
     }
 
-    val runQueryIds = tpcSuite.selectQueryIds(queryIds, excludedQueryIds)
+    val runQueryIds = queries.select(tpcSuite)
 
     // warm up
     (0 until warmupIterations).foreach {
@@ -129,6 +144,7 @@ class Parameterized(
                   queryId,
                   coordinate,
                   tpcSuite.desc(),
+                  explain,
                   metrics)
             }
         }.toList
@@ -176,6 +192,7 @@ class Parameterized(
   }
 }
 
+case class DimKv(k: String, v: String)
 case class Dim(name: String, dimValues: Seq[DimValue])
 case class DimValue(name: String, conf: Seq[(String, String)])
 case class Coordinate(coordinate: Map[String, String]) // [dim, dim value]
@@ -238,6 +255,7 @@ object Parameterized {
       id: String,
       coordinate: Coordinate,
       desc: String,
+      explain: Boolean,
       metrics: Array[String]) = {
     println(s"Running query: $id...")
     try {
@@ -245,7 +263,7 @@ object Parameterized {
       sessionSwitcher.useSession(coordinate.toString, testDesc)
       runner.createTables(sessionSwitcher.spark())
       val result =
-        runner.runTpcQuery(sessionSwitcher.spark(), testDesc, id, explain = false, metrics)
+        runner.runTpcQuery(sessionSwitcher.spark(), testDesc, id, explain, metrics)
       val resultRows = result.rows
       println(
         s"Successfully ran query $id. " +

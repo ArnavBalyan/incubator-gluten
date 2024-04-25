@@ -36,7 +36,6 @@ import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.execution.command.CreateDataSourceTableAsSelectCommand
 import org.apache.spark.sql.execution.datasources.{FileFormat, InsertIntoHadoopFsRelationCommand}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
-import org.apache.spark.sql.expression.UDFResolver
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
@@ -46,21 +45,21 @@ class VeloxBackend extends Backend {
   override def name(): String = VeloxBackend.BACKEND_NAME
   override def buildInfo(): BackendBuildInfo =
     BackendBuildInfo("Velox", VELOX_BRANCH, VELOX_REVISION, VELOX_REVISION_TIME)
-  override def iteratorApi(): IteratorApi = new IteratorApiImpl
-  override def sparkPlanExecApi(): SparkPlanExecApi = new SparkPlanExecApiImpl
-  override def transformerApi(): TransformerApi = new TransformerApiImpl
-  override def validatorApi(): ValidatorApi = new ValidatorApiImpl
-  override def metricsApi(): MetricsApi = new MetricsApiImpl
-  override def listenerApi(): ListenerApi = new ListenerApiImpl
-  override def broadcastApi(): BroadcastApi = new BroadcastApiImpl
-  override def settings(): BackendSettingsApi = BackendSettings
+  override def iteratorApi(): IteratorApi = new VeloxIteratorApi
+  override def sparkPlanExecApi(): SparkPlanExecApi = new VeloxSparkPlanExecApi
+  override def transformerApi(): TransformerApi = new VeloxTransformerApi
+  override def validatorApi(): ValidatorApi = new VeloxValidatorApi
+  override def metricsApi(): MetricsApi = new VeloxMetricsApi
+  override def listenerApi(): ListenerApi = new VeloxListenerApi
+  override def broadcastApi(): BroadcastApi = new VeloxBroadcastApi
+  override def settings(): BackendSettingsApi = VeloxBackendSettings
 }
 
 object VeloxBackend {
   val BACKEND_NAME = "velox"
 }
 
-object BackendSettings extends BackendSettingsApi {
+object VeloxBackendSettings extends BackendSettingsApi {
 
   val SHUFFLE_SUPPORTED_CODEC = Set("lz4", "zstd")
 
@@ -95,7 +94,6 @@ object BackendSettings extends BackendSettingsApi {
         structType.simpleString + " is forced to fallback."
     }
     val orcTypeValidatorWithComplexTypeFallback: PartialFunction[StructField, String] = {
-      case StructField(_, ByteType, _, _) => "ByteType not support"
       case StructField(_, arrayType: ArrayType, _, _) =>
         arrayType.simpleString + " is forced to fallback."
       case StructField(_, mapType: MapType, _, _) =>
@@ -136,7 +134,6 @@ object BackendSettings extends BackendSettingsApi {
           ValidationResult.notOk(s"Velox ORC scan is turned off.")
         } else {
           val typeValidator: PartialFunction[StructField, String] = {
-            case StructField(_, ByteType, _, _) => "ByteType not support"
             case StructField(_, arrayType: ArrayType, _, _)
                 if arrayType.elementType.isInstanceOf[StructType] =>
               "StructType as element in ArrayType"
@@ -182,10 +179,10 @@ object BackendSettings extends BackendSettingsApi {
 
     def validateCompressionCodec(): Option[String] = {
       // Velox doesn't support brotli and lzo.
-      val unSupportedCompressions = Set("brotli, lzo")
+      val unSupportedCompressions = Set("brotli", "lzo", "lz4raw", "lz4_raw")
       val compressionCodec = WriteFilesExecTransformer.getCompressionCodec(options)
       if (unSupportedCompressions.contains(compressionCodec)) {
-        Some("Brotli or lzo compression codec is unsupported in Velox backend.")
+        Some("Brotli, lzo, lz4raw and lz4_raw compression codec is unsupported in Velox backend.")
       } else {
         None
       }
@@ -277,6 +274,13 @@ object BackendSettings extends BackendSettingsApi {
     GlutenConfig.getConf.enableColumnarSortMergeJoin
   }
 
+  override def supportWindowGroupLimitExec(rankLikeFunction: Expression): Boolean = {
+    rankLikeFunction match {
+      case _: RowNumber => true
+      case _ => false
+    }
+  }
+
   override def supportWindowExec(windowFunctions: Seq[NamedExpression]): Boolean = {
     var allSupported = true
     breakable {
@@ -292,6 +296,10 @@ object BackendSettings extends BackendSettingsApi {
           def checkLimitations(swf: SpecifiedWindowFrame, orderSpec: Seq[SortOrder]): Unit = {
             def doCheck(bound: Expression, isUpperBound: Boolean): Unit = {
               bound match {
+                case _: Literal =>
+                  throw new GlutenNotSupportException(
+                    "Window frame of type RANGE does" +
+                      " not support constant arguments in velox backend")
                 case _: SpecialFrameBoundary =>
                 case e if e.foldable =>
                   orderSpec.foreach(
@@ -349,7 +357,8 @@ object BackendSettings extends BackendSettingsApi {
 
   override def supportColumnarShuffleExec(): Boolean = {
     GlutenConfig.getConf.isUseColumnarShuffleManager ||
-    GlutenConfig.getConf.isUseCelebornShuffleManager
+    GlutenConfig.getConf.isUseCelebornShuffleManager ||
+    GlutenConfig.getConf.isUseUniffleShuffleManager
   }
 
   override def enableJoinKeysRewrite(): Boolean = false
@@ -431,7 +440,7 @@ object BackendSettings extends BackendSettingsApi {
     !mayNeedOffload(plan)
   }
 
-  override def fallbackAggregateWithChild(): Boolean = true
+  override def fallbackAggregateWithEmptyOutputChild(): Boolean = true
 
   override def recreateJoinExecOnFallback(): Boolean = true
   override def rescaleDecimalLiteral(): Boolean = true
@@ -444,10 +453,7 @@ object BackendSettings extends BackendSettingsApi {
 
   override def shuffleSupportedCodec(): Set[String] = SHUFFLE_SUPPORTED_CODEC
 
-  override def resolveNativeConf(nativeConf: java.util.Map[String, String]): Unit = {
-    checkMaxBatchSize(nativeConf)
-    UDFResolver.resolveUdfConf(nativeConf)
-  }
+  override def resolveNativeConf(nativeConf: java.util.Map[String, String]): Unit = {}
 
   override def insertPostProjectForGenerate(): Boolean = true
 
@@ -473,17 +479,6 @@ object BackendSettings extends BackendSettingsApi {
     GlutenConfig.getConf.enableNativeWriter.getOrElse(
       SparkShimLoader.getSparkShims.enableNativeWriteFilesByDefault()
     )
-  }
-
-  private def checkMaxBatchSize(nativeConf: java.util.Map[String, String]): Unit = {
-    if (nativeConf.containsKey(GlutenConfig.GLUTEN_MAX_BATCH_SIZE_KEY)) {
-      val maxBatchSize = nativeConf.get(GlutenConfig.GLUTEN_MAX_BATCH_SIZE_KEY).toInt
-      if (maxBatchSize > MAXIMUM_BATCH_SIZE) {
-        throw new IllegalArgumentException(
-          s"The maximum value of ${GlutenConfig.GLUTEN_MAX_BATCH_SIZE_KEY}" +
-            s" is $MAXIMUM_BATCH_SIZE for Velox backend.")
-      }
-    }
   }
 
   override def shouldRewriteCount(): Boolean = {

@@ -27,6 +27,21 @@ trait Pattern[T <: AnyRef] {
 object Pattern {
   trait Matcher[T <: AnyRef] extends (T => Boolean)
 
+  object Matchers {
+    private case class Or[T <: AnyRef](matchers: Seq[Matcher[T]]) extends Matcher[T] {
+      override def apply(t: T): Boolean = {
+        matchers.exists(_(t))
+      }
+    }
+
+    private case class Clazz[T <: AnyRef](clazz: Class[_ <: T]) extends Matcher[T] {
+      override def apply(t: T): Boolean = clazz.isInstance(t)
+    }
+
+    def or[T <: AnyRef](matchers: Matcher[T]*): Matcher[T] = Or(matchers)
+    def clazz[T <: AnyRef](clazz: Class[_ <: T]): Matcher[T] = Clazz(clazz)
+  }
+
   trait Node[T <: AnyRef] {
     // If abort returns true, caller should make sure not to call further methods.
     // It provides a way to fast fail the matching before actually jumping
@@ -90,20 +105,19 @@ object Pattern {
 
   private case class PatternImpl[T <: AnyRef](root: Node[T]) extends Pattern[T] {
     override def matches(path: RasPath[T], depth: Int): Boolean = {
-      assert(depth >= 1)
+      assert(depth >= 0)
       assert(depth <= path.height())
       def dfs(remainingDepth: Int, patternN: Node[T], n: PathNode[T]): Boolean = {
         assert(remainingDepth >= 0)
-        assert(n.self().isCanonical)
         if (remainingDepth == 0) {
+          return true
+        }
+        if (patternN.skip()) {
           return true
         }
         val can = n.self().asCanonical()
         if (patternN.abort(can)) {
           return false
-        }
-        if (patternN.skip()) {
-          return true
         }
         if (!patternN.matches(can)) {
           return false

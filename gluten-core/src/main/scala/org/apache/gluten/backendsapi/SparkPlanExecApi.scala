@@ -38,7 +38,7 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.plans.physical.{BroadcastMode, Partitioning}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.{FileSourceScanExec, GenerateExec, LeafExecNode, SparkPlan}
-import org.apache.spark.sql.execution.datasources.{FileFormat, WriteFilesExec}
+import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.execution.datasources.v2.{BatchScanExec, FileScan}
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.execution.joins.BuildSideRelation
@@ -212,12 +212,71 @@ trait SparkPlanExecApi {
     GenericExpressionTransformer(substraitExprName, Seq(), original)
   }
 
+  def genTryAddTransformer(
+      substraitExprName: String,
+      left: ExpressionTransformer,
+      right: ExpressionTransformer,
+      original: TryEval): ExpressionTransformer = {
+    throw new GlutenNotSupportException("try_add is not supported")
+  }
+
+  def genTryAddTransformer(
+      substraitExprName: String,
+      child: ExpressionTransformer,
+      original: TryEval): ExpressionTransformer = {
+    throw new GlutenNotSupportException("try_eval is not supported")
+  }
+
+  def genAddTransformer(
+      substraitExprName: String,
+      left: ExpressionTransformer,
+      right: ExpressionTransformer,
+      original: Add): ExpressionTransformer = {
+    GenericExpressionTransformer(substraitExprName, Seq(left, right), original)
+  }
+
   /** Transform map_entries to Substrait. */
   def genMapEntriesTransformer(
       substraitExprName: String,
       child: ExpressionTransformer,
       expr: Expression): ExpressionTransformer = {
     throw new GlutenNotSupportException("map_entries is not supported")
+  }
+
+  /** Transform array filter to Substrait. */
+  def genArrayFilterTransformer(
+      substraitExprName: String,
+      argument: ExpressionTransformer,
+      function: ExpressionTransformer,
+      expr: ArrayFilter): ExpressionTransformer = {
+    throw new GlutenNotSupportException("filter(on array) is not supported")
+  }
+
+  /** Transform array forall to Substrait. */
+  def genArrayForAllTransformer(
+      substraitExprName: String,
+      argument: ExpressionTransformer,
+      function: ExpressionTransformer,
+      expr: ArrayForAll): ExpressionTransformer = {
+    throw new GlutenNotSupportException("all_match is not supported")
+  }
+
+  /** Transform array exists to Substrait */
+  def genArrayExistsTransformer(
+      substraitExprName: String,
+      argument: ExpressionTransformer,
+      function: ExpressionTransformer,
+      expr: ArrayExists): ExpressionTransformer = {
+    throw new GlutenNotSupportException("any_match is not supported")
+  }
+
+  /** Transform array transform to Substrait. */
+  def genArrayTransformTransformer(
+      substraitExprName: String,
+      argument: ExpressionTransformer,
+      function: ExpressionTransformer,
+      expr: ArrayTransform): ExpressionTransformer = {
+    throw new GlutenNotSupportException("transform(on array) is not supported")
   }
 
   /** Transform inline to Substrait. */
@@ -298,7 +357,7 @@ trait SparkPlanExecApi {
       partitionColumns: Seq[Attribute],
       bucketSpec: Option[BucketSpec],
       options: Map[String, String],
-      staticPartitions: TablePartitionSpec): WriteFilesExec
+      staticPartitions: TablePartitionSpec): SparkPlan
 
   /**
    * Generate extended DataSourceV2 Strategies. Currently only for ClickHouse backend.
@@ -355,13 +414,6 @@ trait SparkPlanExecApi {
    * @return
    */
   def genExtendedColumnarPostRules(): List[SparkSession => Rule[SparkPlan]]
-
-  def genDecimalRoundTransformer(
-      substraitExprName: String,
-      child: ExpressionTransformer,
-      original: Round): ExpressionTransformer = {
-    GenericExpressionTransformer(substraitExprName, Seq(child), original)
-  }
 
   def genGetStructFieldTransformer(
       substraitExprName: String,
@@ -673,4 +725,6 @@ trait SparkPlanExecApi {
   def genPreProjectForGenerate(generate: GenerateExec): SparkPlan
 
   def genPostProjectForGenerate(generate: GenerateExec): SparkPlan
+
+  def maybeCollapseTakeOrderedAndProject(plan: SparkPlan): SparkPlan = plan
 }

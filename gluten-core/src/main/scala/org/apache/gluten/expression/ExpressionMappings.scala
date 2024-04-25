@@ -61,6 +61,7 @@ object ExpressionMappings {
     Sig[Not](NOT),
     Sig[IsNaN](IS_NAN),
     Sig[NaNvl](NANVL),
+    Sig[TryEval](TRY_EVAL),
 
     // SparkSQL String functions
     Sig[Ascii](ASCII),
@@ -109,6 +110,7 @@ object ExpressionMappings {
     Sig[Ceil](CEIL),
     Sig[Floor](FLOOR),
     Sig[Exp](EXP),
+    Sig[Expm1](EXPM1),
     Sig[Pow](POWER),
     Sig[Pmod](PMOD),
     Sig[Round](ROUND),
@@ -182,6 +184,7 @@ object ExpressionMappings {
     Sig[LastDay](LAST_DAY),
     Sig[MonthsBetween](MONTHS_BETWEEN),
     Sig[DateFromUnixDate](DATE_FROM_UNIX_DATE),
+    Sig[UnixDate](UNIX_DATE),
     Sig[MakeTimestamp](MAKE_TIMESTAMP),
     Sig[MakeYMInterval](MAKE_YM_INTERVAL),
     Sig[ToUTCTimestamp](TO_UTC_TIMESTAMP),
@@ -200,6 +203,7 @@ object ExpressionMappings {
     Sig[Sha2](SHA2),
     Sig[Crc32](CRC32),
     // Array functions
+    Sig[ArrayTransform](TRANSFORM),
     Sig[Size](SIZE),
     Sig[Slice](SLICE),
     Sig[Sequence](SEQUENCE),
@@ -226,6 +230,10 @@ object ExpressionMappings {
     Sig[ArrayExcept](ARRAY_EXCEPT),
     Sig[ArrayRepeat](ARRAY_REPEAT),
     Sig[ArrayRemove](ARRAY_REMOVE),
+    Sig[ArrayFilter](FILTER),
+    Sig[ArrayForAll](FORALL),
+    Sig[ArrayExists](EXISTS),
+    Sig[Shuffle](SHUFFLE),
     // Map functions
     Sig[CreateMap](CREATE_MAP),
     Sig[GetMapValue](GET_MAP_VALUE),
@@ -238,6 +246,7 @@ object ExpressionMappings {
     Sig[GetStructField](GET_STRUCT_FIELD),
     Sig[CreateNamedStruct](NAMED_STRUCT),
     // Directly use child expression transformer
+    Sig[KnownNotNull](KNOWN_NOT_NULL),
     Sig[KnownFloatingPointNormalized](KNOWN_FLOATING_POINT_NORMALIZED),
     Sig[NormalizeNaNAndZero](NORMALIZE_NANAND_ZERO),
     // Specific expression

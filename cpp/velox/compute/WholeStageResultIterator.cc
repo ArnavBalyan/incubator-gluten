@@ -127,7 +127,8 @@ WholeStageResultIterator::WholeStageResultIterator(
       fmt::format("Gluten_Stage_{}_TID_{}", std::to_string(taskInfo_.stageId), std::to_string(taskInfo_.taskId)),
       std::move(planFragment),
       0,
-      std::move(queryCtx));
+      std::move(queryCtx),
+      velox::exec::Task::ExecutionMode::kSerial);
   if (!task_->supportsSingleThreadedExecution()) {
     throw std::runtime_error("Task doesn't support single thread execution: " + planNode->toString());
   }
@@ -520,7 +521,7 @@ std::unordered_map<std::string, std::string> WholeStageResultIterator::getQueryC
         std::to_string(veloxCfg_->get<bool>(kOrderBySpillEnabled, true));
     configs[velox::core::QueryConfig::kMaxSpillLevel] = std::to_string(veloxCfg_->get<int32_t>(kMaxSpillLevel, 4));
     configs[velox::core::QueryConfig::kMaxSpillFileSize] =
-        std::to_string(veloxCfg_->get<uint64_t>(kMaxSpillFileSize, 20L * 1024 * 1024));
+        std::to_string(veloxCfg_->get<uint64_t>(kMaxSpillFileSize, 1L * 1024 * 1024 * 1024));
     configs[velox::core::QueryConfig::kMaxSpillRunRows] =
         std::to_string(veloxCfg_->get<uint64_t>(kMaxSpillRunRows, 12L * 1024 * 1024));
     configs[velox::core::QueryConfig::kMaxSpillBytes] =
@@ -559,12 +560,13 @@ std::unordered_map<std::string, std::string> WholeStageResultIterator::getQueryC
 }
 
 std::shared_ptr<velox::Config> WholeStageResultIterator::createConnectorConfig() {
+  // The configs below are used at session level.
   std::unordered_map<std::string, std::string> configs = {};
   // The semantics of reading as lower case is opposite with case-sensitive.
   configs[velox::connector::hive::HiveConfig::kFileColumnNamesReadAsLowerCaseSession] =
       !veloxCfg_->get<bool>(kCaseSensitive, false) ? "true" : "false";
   configs[velox::connector::hive::HiveConfig::kPartitionPathAsLowerCaseSession] = "false";
-  configs[velox::connector::hive::HiveConfig::kParquetWriteTimestampUnit] = "6";
+  configs[velox::connector::hive::HiveConfig::kParquetWriteTimestampUnitSession] = "6";
   configs[velox::connector::hive::HiveConfig::kMaxPartitionsPerWritersSession] =
       std::to_string(veloxCfg_->get<int32_t>(kMaxPartitions, 10000));
   configs[velox::connector::hive::HiveConfig::kIgnoreMissingFilesSession] =

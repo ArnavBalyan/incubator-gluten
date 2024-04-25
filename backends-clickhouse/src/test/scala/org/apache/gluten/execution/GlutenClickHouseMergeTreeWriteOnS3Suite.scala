@@ -16,6 +16,7 @@
  */
 package org.apache.gluten.execution
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.delta.catalog.ClickHouseTableV2
 import org.apache.spark.sql.delta.files.TahoeFileIndex
 import org.apache.spark.sql.execution.datasources.v2.clickhouse.metadata.AddMergeTreeParts
@@ -33,7 +34,7 @@ import java.util
 // scalastyle:off line.size.limit
 
 class GlutenClickHouseMergeTreeWriteOnS3Suite
-  extends GlutenClickHouseMergeTreeWriteOnObjectStorageAbstractSuite
+  extends GlutenClickHouseTPCHAbstractSuite
   with AdaptiveSparkPlanHelper {
 
   override protected val needCopyParquetToTablePath = true
@@ -41,6 +42,20 @@ class GlutenClickHouseMergeTreeWriteOnS3Suite
   override protected val tablesPath: String = basePath + "/tpch-data"
   override protected val tpchQueries: String = rootPath + "queries/tpch-queries-ch"
   override protected val queriesResults: String = rootPath + "mergetree-queries-output"
+
+  override protected def createTPCHNotNullTables(): Unit = {
+    createNotNullTPCHTablesInParquet(tablesPath)
+  }
+
+  override protected def sparkConf: SparkConf = {
+    super.sparkConf
+      .set("spark.shuffle.manager", "org.apache.spark.shuffle.sort.ColumnarShuffleManager")
+      .set("spark.io.compression.codec", "LZ4")
+      .set("spark.sql.shuffle.partitions", "5")
+      .set("spark.sql.autoBroadcastJoinThreshold", "10MB")
+      .set("spark.sql.adaptive.enabled", "true")
+      .set("spark.gluten.sql.columnar.backend.ch.runtime_config.logger.level", "error")
+  }
 
   override protected def beforeEach(): Unit = {
     super.beforeEach()
@@ -64,18 +79,15 @@ class GlutenClickHouseMergeTreeWriteOnS3Suite
     }
     client.makeBucket(MakeBucketArgs.builder().bucket(BUCKET_NAME).build())
     FileUtils.deleteDirectory(new File(S3_METADATA_PATH))
-    FileUtils.deleteDirectory(new File(S3_CACHE_PATH))
     FileUtils.forceMkdir(new File(S3_METADATA_PATH))
-    FileUtils.forceMkdir(new File(S3_CACHE_PATH))
   }
 
   override protected def afterEach(): Unit = {
     super.afterEach()
     FileUtils.deleteDirectory(new File(S3_METADATA_PATH))
-    FileUtils.deleteDirectory(new File(S3_CACHE_PATH))
   }
 
-  ignore("test mergetree table write") {
+  test("test mergetree table write") {
     spark.sql(s"""
                  |DROP TABLE IF EXISTS lineitem_mergetree_s3;
                  |""".stripMargin)
@@ -158,7 +170,7 @@ class GlutenClickHouseMergeTreeWriteOnS3Suite
     spark.sql("drop table lineitem_mergetree_s3") // clean up
   }
 
-  ignore("test mergetree write with orderby keys / primary keys") {
+  test("test mergetree write with orderby keys / primary keys") {
     spark.sql(s"""
                  |DROP TABLE IF EXISTS lineitem_mergetree_orderbykey_s3;
                  |""".stripMargin)
@@ -255,7 +267,7 @@ class GlutenClickHouseMergeTreeWriteOnS3Suite
     spark.sql("drop table lineitem_mergetree_orderbykey_s3")
   }
 
-  ignore("test mergetree write with partition") {
+  test("test mergetree write with partition") {
     spark.sql(s"""
                  |DROP TABLE IF EXISTS lineitem_mergetree_partition_s3;
                  |""".stripMargin)
@@ -437,7 +449,7 @@ class GlutenClickHouseMergeTreeWriteOnS3Suite
 
   }
 
-  ignore("test mergetree write with bucket table") {
+  test("test mergetree write with bucket table") {
     spark.sql(s"""
                  |DROP TABLE IF EXISTS lineitem_mergetree_bucket_s3;
                  |""".stripMargin)
@@ -465,7 +477,7 @@ class GlutenClickHouseMergeTreeWriteOnS3Suite
                  |USING clickhouse
                  |PARTITIONED BY (l_returnflag)
                  |CLUSTERED BY (l_orderkey)
-                 |${if (sparkVersion.equals("3.2")) "" else "SORTED BY (l_orderkey)"} INTO 4 BUCKETS
+                 |${if (sparkVersion.equals("3.2")) "" else "SORTED BY (l_partkey)"} INTO 4 BUCKETS
                  |LOCATION 's3a://$BUCKET_NAME/lineitem_mergetree_bucket_s3'
                  |TBLPROPERTIES (storage_policy='__s3_main')
                  |""".stripMargin)
@@ -522,7 +534,7 @@ class GlutenClickHouseMergeTreeWriteOnS3Suite
               .orderByKeyOption
               .get
               .mkString(",")
-              .equals("l_orderkey"))
+              .equals("l_partkey"))
         }
         assert(ClickHouseTableV2.getTable(fileIndex.deltaLog).primaryKeyOption.isEmpty)
         assert(ClickHouseTableV2.getTable(fileIndex.deltaLog).partitionColumns.size == 1)
@@ -539,5 +551,87 @@ class GlutenClickHouseMergeTreeWriteOnS3Suite
     spark.sql("drop table lineitem_mergetree_bucket_s3")
   }
 
+  test("test mergetree write with the path based") {
+    val dataPath = s"s3a://$BUCKET_NAME/lineitem_mergetree_bucket_s3"
+
+    val sourceDF = spark.sql(s"""
+                                |select * from lineitem
+                                |""".stripMargin)
+
+    sourceDF.write
+      .format("clickhouse")
+      .mode(SaveMode.Append)
+      .partitionBy("l_returnflag")
+      .option("clickhouse.orderByKey", "l_orderkey")
+      .option("clickhouse.primaryKey", "l_orderkey")
+      .option("clickhouse.numBuckets", "4")
+      .option("clickhouse.bucketColumnNames", "l_orderkey")
+      .option("clickhouse.storage_policy", "__s3_main")
+      .save(dataPath)
+
+    val sqlStr =
+      s"""
+         |SELECT
+         |    l_returnflag,
+         |    l_linestatus,
+         |    sum(l_quantity) AS sum_qty,
+         |    sum(l_extendedprice) AS sum_base_price,
+         |    sum(l_extendedprice * (1 - l_discount)) AS sum_disc_price,
+         |    sum(l_extendedprice * (1 - l_discount) * (1 + l_tax)) AS sum_charge,
+         |    avg(l_quantity) AS avg_qty,
+         |    avg(l_extendedprice) AS avg_price,
+         |    avg(l_discount) AS avg_disc,
+         |    count(*) AS count_order
+         |FROM
+         |    clickhouse.`$dataPath`
+         |WHERE
+         |    l_shipdate <= date'1998-09-02' - interval 1 day
+         |GROUP BY
+         |    l_returnflag,
+         |    l_linestatus
+         |ORDER BY
+         |    l_returnflag,
+         |    l_linestatus;
+         |
+         |""".stripMargin
+    runTPCHQueryBySQL(1, sqlStr) {
+      df =>
+        val scanExec = collect(df.queryExecution.executedPlan) {
+          case f: FileSourceScanExecTransformer => f
+        }
+        assert(scanExec.size == 1)
+
+        val mergetreeScan = scanExec(0)
+        assert(mergetreeScan.nodeName.startsWith("Scan mergetree"))
+
+        val fileIndex = mergetreeScan.relation.location.asInstanceOf[TahoeFileIndex]
+        assert(ClickHouseTableV2.getTable(fileIndex.deltaLog).clickhouseTableConfigs.nonEmpty)
+        assert(!ClickHouseTableV2.getTable(fileIndex.deltaLog).bucketOption.isEmpty)
+        assert(
+          ClickHouseTableV2
+            .getTable(fileIndex.deltaLog)
+            .orderByKeyOption
+            .get
+            .mkString(",")
+            .equals("l_orderkey"))
+        assert(ClickHouseTableV2.getTable(fileIndex.deltaLog).primaryKeyOption.nonEmpty)
+        assert(ClickHouseTableV2.getTable(fileIndex.deltaLog).partitionColumns.size == 1)
+        assert(
+          ClickHouseTableV2
+            .getTable(fileIndex.deltaLog)
+            .partitionColumns(0)
+            .equals("l_returnflag"))
+        val addFiles = fileIndex.matchingFiles(Nil, Nil).map(f => f.asInstanceOf[AddMergeTreeParts])
+
+        assert(addFiles.size == 12)
+        assert(addFiles.map(_.rows).sum == 600572)
+    }
+
+    val result = spark.read
+      .format("clickhouse")
+      .load(dataPath)
+      .count()
+    assert(result == 600572)
+  }
 }
 // scalastyle:off line.size.limit

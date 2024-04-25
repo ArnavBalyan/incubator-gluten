@@ -19,8 +19,8 @@ package org.apache.gluten.execution
 import org.apache.gluten.GlutenConfig
 import org.apache.gluten.utils.UTSystemParameters
 
-import org.apache.spark.{SPARK_VERSION_SHORT, SparkConf}
-import org.apache.spark.sql.{DataFrame, Row}
+import org.apache.spark.SparkConf
+import org.apache.spark.sql.{DataFrame, Row, TestUtils}
 import org.apache.spark.sql.catalyst.optimizer.{ConstantFolding, NullPropagation}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
@@ -31,11 +31,6 @@ import java.sql.Date
 import scala.reflect.ClassTag
 
 class GlutenFunctionValidateSuite extends GlutenClickHouseWholeStageTransformerSuite {
-
-  protected lazy val sparkVersion: String = {
-    val version = SPARK_VERSION_SHORT.split("\\.")
-    version(0) + "." + version(1)
-  }
 
   protected val tablesPath: String = basePath + "/tpch-data"
   protected val tpchQueries: String =
@@ -500,13 +495,54 @@ class GlutenFunctionValidateSuite extends GlutenClickHouseWholeStageTransformerS
   }
 
   test("test round issue: https://github.com/oap-project/gluten/issues/3462") {
-    runQueryAndCompare(
-      "select round(0.41875d * id , 4) from range(10);"
-    )(checkGlutenOperatorMatch[ProjectExecTransformer])
+    def checkResult(df: DataFrame, exceptedResult: Seq[Row]): Unit = {
+      // check the result
+      val result = df.collect()
+      assert(result.size == exceptedResult.size)
+      TestUtils.compareAnswers(result, exceptedResult)
+    }
 
-    runQueryAndCompare(
-      "select round(0.41875f * id , 4) from range(10);"
-    )(checkGlutenOperatorMatch[ProjectExecTransformer])
+    runSql("select round(0.41875d * id , 4) from range(10);")(
+      df => {
+        checkGlutenOperatorMatch[ProjectExecTransformer](df)
+
+        checkResult(
+          df,
+          Seq(
+            Row(0.0),
+            Row(0.4188),
+            Row(0.8375),
+            Row(1.2563),
+            Row(1.675),
+            Row(2.0938),
+            Row(2.5125),
+            Row(2.9313),
+            Row(3.35),
+            Row(3.7688)
+          )
+        )
+      })
+
+    runSql("select round(0.41875f * id , 4) from range(10);")(
+      df => {
+        checkGlutenOperatorMatch[ProjectExecTransformer](df)
+
+        checkResult(
+          df,
+          Seq(
+            Row(0.0f),
+            Row(0.4188f),
+            Row(0.8375f),
+            Row(1.2562f),
+            Row(1.675f),
+            Row(2.0938f),
+            Row(2.5125f),
+            Row(2.9312f),
+            Row(3.35f),
+            Row(3.7688f)
+          )
+        )
+      })
   }
 
   test("test date comparision expression override") {
@@ -658,6 +694,18 @@ class GlutenFunctionValidateSuite extends GlutenClickHouseWholeStageTransformerS
         runQueryAndCompare(disinctSQL)(checkGlutenOperatorMatch[CHHashAggregateExecTransformer])
       }
     }
+  }
+
+  test("equalTo rewrite to isNaN") {
+    withTable("tb_scrt") {
+      sql("create table tb_scrt(id int) using parquet")
+      sql("""
+            |insert into tb_scrt values (-2147483648),(-2147483648)
+            |""".stripMargin)
+      val q = "select sqrt(id),sqrt(id)='NaN' from tb_scrt"
+      runQueryAndCompare(q)(checkGlutenOperatorMatch[ProjectExecTransformer])
+    }
+
   }
 
 }

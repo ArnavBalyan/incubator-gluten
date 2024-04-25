@@ -49,7 +49,8 @@ class GlutenClickHouseTPCHSaltNullParquetSuite extends GlutenClickHouseTPCHAbstr
       .set("spark.sql.shuffle.partitions", "5")
       .set("spark.sql.autoBroadcastJoinThreshold", "10MB")
       .set("spark.gluten.supported.scala.udfs", "my_add")
-    // .set("spark.sql.planChangeLog.level", "error")
+//      .set("spark.gluten.sql.columnar.backend.ch.runtime_config.logger.level", "trace")
+//      .set("spark.sql.planChangeLog.level", "error")
   }
 
   override protected val createNullableTables = true
@@ -688,6 +689,22 @@ class GlutenClickHouseTPCHSaltNullParquetSuite extends GlutenClickHouseTPCHAbstr
     }
   }
 
+  test("test shuffle function") {
+    withSQLConf(
+      SQLConf.OPTIMIZER_EXCLUDED_RULES.key -> (ConstantFolding.ruleName + "," + NullPropagation.ruleName)) {
+      runQueryAndCompare(
+        "select shuffle(split(n_comment, ' ')) from nation",
+        compareResult = false
+      )(checkGlutenOperatorMatch[ProjectExecTransformer])
+
+      runQueryAndCompare(
+        "select shuffle(array(1,2,3,4,5)), shuffle(array(1,3,null,3,4)), shuffle(null)",
+        compareResult = false,
+        noFallBack = false
+      )(checkGlutenOperatorMatch[ProjectExecTransformer])
+    }
+  }
+
   test("test 'function regexp_extract_all'") {
     runQueryAndCompare(
       "select l_orderkey, regexp_extract_all(l_comment, '([a-z])', 1) " +
@@ -1157,6 +1174,14 @@ class GlutenClickHouseTPCHSaltNullParquetSuite extends GlutenClickHouseTPCHAbstr
         | from nation
         |""".stripMargin
     runQueryAndCompare(sql)(checkGlutenOperatorMatch[ProjectExecTransformer])
+  }
+
+  test("test bin function") {
+    runQueryAndCompare("select bin(id - 50) from range (100)")(
+      checkGlutenOperatorMatch[ProjectExecTransformer])
+
+    runQueryAndCompare("select bin(n_nationkey) from nation")(
+      checkGlutenOperatorMatch[ProjectExecTransformer])
   }
 
   test("test 'sequence'") {
@@ -2290,6 +2315,19 @@ class GlutenClickHouseTPCHSaltNullParquetSuite extends GlutenClickHouseTPCHAbstr
           |""".stripMargin
       compareResultsAgainstVanillaSpark(sql, true, { _ => })
     }
+  }
+
+  test("GLUTEN-4914: Fix exceptions in ASTParser") {
+    val sql =
+      """
+        |select t1.l_orderkey, t1.l_partkey, t1.l_shipdate, t2.o_custkey from (
+        |select l_orderkey, l_partkey, l_shipdate from lineitem where l_orderkey < 1000 ) t1
+        |join (
+        |  select o_orderkey, o_custkey, o_orderdate from orders where o_orderkey < 1000
+        |) t2 on t1.l_orderkey = t2.o_orderkey
+        |and unix_timestamp(t1.l_shipdate, 'yyyy-MM-dd') < unix_timestamp(t2.o_orderdate, 'yyyy-MM-dd')
+        |""".stripMargin
+    compareResultsAgainstVanillaSpark(sql, true, { _ => })
   }
 
   test("GLUTEN-3467: Fix 'Names of tuple elements must be unique' error for ch backend") {

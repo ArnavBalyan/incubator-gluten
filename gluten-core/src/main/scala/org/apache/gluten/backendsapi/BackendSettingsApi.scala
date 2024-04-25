@@ -22,7 +22,7 @@ import org.apache.gluten.substrait.rel.LocalFilesNode.ReadFileFormat
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.catalyst.catalog.BucketSpec
-import org.apache.spark.sql.catalyst.expressions.NamedExpression
+import org.apache.spark.sql.catalyst.expressions.{Expression, NamedExpression}
 import org.apache.spark.sql.catalyst.plans._
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.execution.SparkPlan
@@ -49,6 +49,9 @@ trait BackendSettingsApi {
   def supportWindowExec(windowFunctions: Seq[NamedExpression]): Boolean = {
     false
   }
+  def supportWindowGroupLimitExec(rankLikeFunction: Expression): Boolean = {
+    false
+  }
   def supportColumnarShuffleExec(): Boolean = {
     GlutenConfig.getConf.enableColumnarShuffle
   }
@@ -64,8 +67,8 @@ trait BackendSettingsApi {
   def supportStructType(): Boolean = false
   def fallbackOnEmptySchema(plan: SparkPlan): Boolean = false
 
-  // Whether to fallback aggregate at the same time if its child is fallbacked.
-  def fallbackAggregateWithChild(): Boolean = false
+  // Whether to fallback aggregate at the same time if its empty-output child is fallen back.
+  def fallbackAggregateWithEmptyOutputChild(): Boolean = false
 
   def disableVanillaColumnarReaders(conf: SparkConf): Boolean =
     !conf.getBoolean(
@@ -114,13 +117,16 @@ trait BackendSettingsApi {
 
   def requiredChildOrderingForWindow(): Boolean = false
 
+  def requiredChildOrderingForWindowGroupLimit(): Boolean = false
+
   def staticPartitionWriteOnly(): Boolean = false
 
   def supportTransformWriteFiles: Boolean = false
 
   def requiredInputFilePaths(): Boolean = false
 
-  def enableBloomFilterAggFallbackRule(): Boolean = true
+  // TODO: Move this to test settings as used in UT only.
+  def requireBloomFilterAggMightContainJointFallback(): Boolean = true
 
   def enableNativeWriteFiles(): Boolean
 

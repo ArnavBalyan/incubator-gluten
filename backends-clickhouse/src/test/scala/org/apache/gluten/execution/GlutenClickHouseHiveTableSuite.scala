@@ -19,10 +19,8 @@ package org.apache.gluten.execution
 import org.apache.gluten.GlutenConfig
 import org.apache.gluten.utils.UTSystemParameters
 
-import org.apache.spark.SPARK_VERSION_SHORT
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.DataFrame
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
 import org.apache.spark.sql.hive.HiveTableScanExecTransformer
@@ -89,11 +87,6 @@ class GlutenClickHouseHiveTableSuite
 
   private var _hiveSpark: SparkSession = _
 
-  protected lazy val sparkVersion: String = {
-    val version = SPARK_VERSION_SHORT.split("\\.")
-    version(0) + "." + version(1)
-  }
-
   override protected def sparkConf: SparkConf = {
     new SparkConf()
       .set("spark.plugins", "org.apache.gluten.GlutenPlugin")
@@ -115,7 +108,7 @@ class GlutenClickHouseHiveTableSuite
       .set("spark.gluten.sql.parquet.maxmin.index", "true")
       .set(
         "spark.sql.warehouse.dir",
-        getClass.getResource("/").getPath + "unit-tests-working-home/spark-warehouse")
+        getClass.getResource("/").getPath + "tests-working-home/spark-warehouse")
       .set("spark.hive.exec.dynamic.partition.mode", "nonstrict")
       .set("spark.gluten.supported.hive.udfs", "my_add")
       .setMaster("local[*]")
@@ -958,11 +951,14 @@ class GlutenClickHouseHiveTableSuite
     val select_sql_3 = "select id, get_json_object(data, '$.123.234') from test_tbl_3337"
     val select_sql_4 = "select id, get_json_object(data, '$.v111') from test_tbl_3337"
     val select_sql_5 = "select id, get_json_object(data, 'v112') from test_tbl_3337"
+    val select_sql_6 =
+      "select id, get_json_object(data, '$.id') from test_tbl_3337 where id = 123";
     compareResultsAgainstVanillaSpark(select_sql_1, compareResult = true, _ => {})
     compareResultsAgainstVanillaSpark(select_sql_2, compareResult = true, _ => {})
     compareResultsAgainstVanillaSpark(select_sql_3, compareResult = true, _ => {})
     compareResultsAgainstVanillaSpark(select_sql_4, compareResult = true, _ => {})
     compareResultsAgainstVanillaSpark(select_sql_5, compareResult = true, _ => {})
+    compareResultsAgainstVanillaSpark(select_sql_6, compareResult = true, _ => {})
 
     spark.sql("DROP TABLE test_tbl_3337")
   }

@@ -16,7 +16,7 @@
  */
 package org.apache.spark.sql.expression
 
-import org.apache.gluten.backendsapi.velox.BackendSettings
+import org.apache.gluten.backendsapi.velox.VeloxBackendSettings
 import org.apache.gluten.exception.GlutenException
 import org.apache.gluten.expression.{ConverterUtils, ExpressionTransformer, ExpressionType, Transformable}
 import org.apache.gluten.expression.ConverterUtils.FunctionConfig
@@ -24,7 +24,7 @@ import org.apache.gluten.substrait.expression.ExpressionBuilder
 import org.apache.gluten.udf.UdfJniWrapper
 import org.apache.gluten.vectorized.JniWorkspace
 
-import org.apache.spark.{SparkConf, SparkContext, SparkEnv, SparkFiles}
+import org.apache.spark.{SparkConf, SparkContext, SparkFiles}
 import org.apache.spark.deploy.SparkHadoopUtil
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, InternalRow}
@@ -118,9 +118,6 @@ object UDFResolver extends Logging {
 
   private val LIB_EXTENSION = ".so"
 
-  private lazy val isDriver: Boolean =
-    "driver".equals(SparkEnv.get.executorId)
-
   // Called by JNI.
   def registerUDF(name: String, returnType: Array[Byte], argTypes: Array[Byte]): Unit = {
     registerUDF(
@@ -196,19 +193,20 @@ object UDFResolver extends Logging {
       .toSeq
   }
 
-  def resolveUdfConf(conf: java.util.Map[String, String]): Unit = {
-    val sparkConf = SparkEnv.get.conf
+  def resolveUdfConf(sparkConf: SparkConf, isDriver: Boolean): Unit = {
     val udfLibPaths = if (isDriver) {
       sparkConf
-        .getOption(BackendSettings.GLUTEN_VELOX_DRIVER_UDF_LIB_PATHS)
-        .orElse(sparkConf.getOption(BackendSettings.GLUTEN_VELOX_UDF_LIB_PATHS))
+        .getOption(VeloxBackendSettings.GLUTEN_VELOX_DRIVER_UDF_LIB_PATHS)
+        .orElse(sparkConf.getOption(VeloxBackendSettings.GLUTEN_VELOX_UDF_LIB_PATHS))
     } else {
-      sparkConf.getOption(BackendSettings.GLUTEN_VELOX_UDF_LIB_PATHS)
+      sparkConf.getOption(VeloxBackendSettings.GLUTEN_VELOX_UDF_LIB_PATHS)
     }
 
     udfLibPaths match {
       case Some(paths) =>
-        conf.put(BackendSettings.GLUTEN_VELOX_UDF_LIB_PATHS, getAllLibraries(paths, sparkConf))
+        sparkConf.set(
+          VeloxBackendSettings.GLUTEN_VELOX_UDF_LIB_PATHS,
+          getAllLibraries(sparkConf, isDriver, paths))
       case None =>
     }
   }
@@ -242,7 +240,7 @@ object UDFResolver extends Logging {
 
   // Get the full paths of all libraries.
   // If it's a directory, get all files ends with ".so" recursively.
-  private def getAllLibraries(files: String, sparkConf: SparkConf): String = {
+  private def getAllLibraries(sparkConf: SparkConf, isDriver: Boolean, files: String) = {
     val hadoopConf = SparkHadoopUtil.newConfiguration(sparkConf)
     val master = sparkConf.getOption("spark.master")
     val isYarnCluster =
@@ -296,7 +294,7 @@ object UDFResolver extends Logging {
   def getFunctionSignatures: Seq[(FunctionIdentifier, ExpressionInfo, FunctionBuilder)] = {
     val sparkContext = SparkContext.getActive.get
     val sparkConf = sparkContext.conf
-    val udfLibPaths = sparkConf.getOption(BackendSettings.GLUTEN_VELOX_UDF_LIB_PATHS)
+    val udfLibPaths = sparkConf.getOption(VeloxBackendSettings.GLUTEN_VELOX_UDF_LIB_PATHS)
 
     udfLibPaths match {
       case None =>

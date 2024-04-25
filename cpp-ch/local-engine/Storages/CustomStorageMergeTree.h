@@ -38,6 +38,7 @@ class CustomStorageMergeTree final : public MergeTreeData
 
 public:
     static void wrapRangesInDataParts(DB::ReadFromMergeTree & source, DB::RangesInDataParts ranges);
+    void analysisPartsByRanges(DB::ReadFromMergeTree & source, DB::RangesInDataParts ranges_in_data_parts);
     CustomStorageMergeTree(
         const StorageID & table_id_,
         const String & relative_data_path_,
@@ -52,7 +53,7 @@ public:
     std::vector<MergeTreeMutationStatus> getMutationsStatus() const override;
     bool scheduleDataProcessingJob(BackgroundJobsAssignee & executor) override;
     std::map<std::string, MutationCommands> getUnfinishedMutationCommands() const override;
-    DataPartsVector loadDataPartsWithNames(std::unordered_set<std::string> parts);
+    MutableDataPartsVector loadDataPartsWithNames(std::unordered_set<std::string> parts);
 
 
     MergeTreeDataWriter writer;

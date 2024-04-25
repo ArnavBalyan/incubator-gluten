@@ -114,7 +114,8 @@ function compile {
     fi
   fi
 
-  COMPILE_OPTION="-DVELOX_ENABLE_PARQUET=ON -DVELOX_BUILD_TESTING=OFF"
+  CXX_FLAGS='-Wno-missing-field-initializers'
+  COMPILE_OPTION="-DCMAKE_CXX_FLAGS=\"$CXX_FLAGS\" -DVELOX_ENABLE_PARQUET=ON -DVELOX_BUILD_TESTING=OFF"
   if [ $BUILD_TEST_UTILS == "ON" ]; then
       COMPILE_OPTION="$COMPILE_OPTION -DVELOX_BUILD_TEST_UTILS=ON"
   fi
@@ -208,7 +209,7 @@ function check_commit {
     fi
   else
     # Branch-new build requires all untracked files to be deleted. We only need the source code.
-    git clean -dffx :/
+    sudo git clean -dffx :/
   fi
 
   if [ -f ${VELOX_HOME}/velox-build.cache ]; then

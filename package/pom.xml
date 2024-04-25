@@ -71,11 +71,21 @@
       </dependencies>
     </profile>
     <profile>
-      <id>rss</id>
+      <id>celeborn</id>
       <dependencies>
         <dependency>
           <groupId>org.apache.gluten</groupId>
           <artifactId>gluten-celeborn-package</artifactId>
+          <version>${project.version}</version>
+        </dependency>
+      </dependencies>
+    </profile>
+    <profile>
+      <id>uniffle</id>
+      <dependencies>
+        <dependency>
+          <groupId>org.apache.gluten</groupId>
+          <artifactId>gluten-uniffle-package</artifactId>
           <version>${project.version}</version>
         </dependency>
       </dependencies>

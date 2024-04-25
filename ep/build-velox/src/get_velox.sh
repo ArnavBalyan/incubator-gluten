@@ -17,7 +17,7 @@
 set -exu
 
 VELOX_REPO=https://github.com/oap-project/velox.git
-VELOX_BRANCH=2024_04_04
+VELOX_BRANCH=2024_04_25
 VELOX_HOME=""
 
 #Set on run gluten on HDFS
@@ -93,7 +93,6 @@ function process_setup_ubuntu {
   sed -i '/ccache/a\  libuuid1 \\' scripts/setup-ubuntu.sh
   sed -i '/ccache/a\  uuid-dev \\' scripts/setup-ubuntu.sh
   sed -i '/ccache/a\  curl \\' scripts/setup-ubuntu.sh
-  sed -i '/libre2-dev/d' scripts/setup-ubuntu.sh
   sed -i '/libgmock-dev/d' scripts/setup-ubuntu.sh # resolved by ep/build-velox/build/velox_ep/CMake/resolve_dependency_modules/gtest.cmake
   sed -i 's/github_checkout boostorg\/boost \"\${BOOST_VERSION}\" --recursive/wget_and_untar https:\/\/github.com\/boostorg\/boost\/releases\/download\/boost-1.84.0\/boost-1.84.0.tar.gz boost \&\& cd boost/g' scripts/setup-ubuntu.sh
   if [ $ENABLE_HDFS == "ON" ]; then
@@ -138,7 +137,7 @@ function process_setup_centos8 {
   sed -i '/^  run_and_time install_fbthrift/a \  run_and_time install_openssl' scripts/setup-centos8.sh
 
   if [ $ENABLE_HDFS == "ON" ]; then
-    sed -i '/^function install_gflags.*/i function install_libhdfs3 {\n cd "\${DEPENDENCY_DIR}"\n github_checkout oap-project/libhdfs3 master\n cd ..\n cmake_install libhdfs3\n}\n' scripts/setup-centos8.sh
+    sed -i '/^function install_gflags.*/i function install_libhdfs3 {\n cd "\${DEPENDENCY_DIR}"\n github_checkout oap-project/libhdfs3 master\n cmake_install\n}\n' scripts/setup-centos8.sh
     sed -i '/^  run_and_time install_fbthrift/a \  run_and_time install_libhdfs3' scripts/setup-centos8.sh
     sed -i '/^  dnf_install ninja-build/a\  dnf_install yasm\' scripts/setup-centos8.sh
   fi
@@ -169,9 +168,6 @@ function process_setup_centos7 {
 
   # No need to re-install git.
   sed -i 's/dnf_install ccache git/dnf_install ccache/' scripts/setup-centos7.sh
-  # cmake 3 and ninja should be installed
-  sed -i '/^run_and_time install_cmake/d' scripts/setup-centos7.sh
-  sed -i '/^run_and_time install_ninja/d' scripts/setup-centos7.sh
 
   # install gtest
   sed -i '/^  run_and_time install_folly/a \ \ run_and_time install_gtest' scripts/setup-centos7.sh
@@ -206,6 +202,9 @@ function process_setup_alinux3 {
   sed -i "s/.*dnf config-manager --set-enabled powertools/#&/" scripts/setup-centos8.sh
   sed -i "s/gcc-toolset-9 //" scripts/setup-centos8.sh
   sed -i "s/.*source \/opt\/rh\/gcc-toolset-9\/enable/#&/" scripts/setup-centos8.sh
+  sed -i 's|^export CC=/opt/rh/gcc-toolset-9/root/bin/gcc|# &|' scripts/setup-centos8.sh
+  sed -i 's|^export CXX=/opt/rh/gcc-toolset-9/root/bin/g++|# &|' scripts/setup-centos8.sh
+  sed -i 's/python39 python39-devel python39-pip //g' scripts/setup-centos8.sh
   sed -i "s/\${CMAKE_INSTALL_LIBDIR}/lib64/" third_party/CMakeLists.txt
 }
 

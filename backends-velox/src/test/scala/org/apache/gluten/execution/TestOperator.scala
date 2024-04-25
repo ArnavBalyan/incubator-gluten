@@ -22,9 +22,12 @@ import org.apache.gluten.sql.shims.SparkShimLoader
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, Row}
 import org.apache.spark.sql.execution.{FilterExec, GenerateExec, ProjectExec, RDDScanExec}
-import org.apache.spark.sql.functions.{avg, col, lit, udf}
+import org.apache.spark.sql.execution.window.WindowExec
+import org.apache.spark.sql.functions.{avg, col, lit, to_date, udf}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DecimalType, StringType, StructField, StructType}
+
+import java.util.concurrent.TimeUnit
 
 import scala.collection.JavaConverters
 
@@ -200,6 +203,13 @@ class TestOperator extends VeloxWholeStageTransformerSuite {
       windowType =>
         withSQLConf("spark.gluten.sql.columnar.backend.velox.window.type" -> windowType) {
           runQueryAndCompare(
+            "select max(l_partkey) over" +
+              " (partition by l_suppkey order by l_orderkey" +
+              " RANGE BETWEEN CURRENT ROW AND 2 FOLLOWING) from lineitem ") {
+            checkSparkOperatorMatch[WindowExec]
+          }
+
+          runQueryAndCompare(
             "select ntile(4) over" +
               " (partition by l_suppkey order by l_orderkey) from lineitem ") {
             checkGlutenOperatorMatch[WindowExecTransformer]
@@ -367,6 +377,20 @@ class TestOperator extends VeloxWholeStageTransformerSuite {
         runQueryAndCompare("SELECT a from view") {
           checkGlutenOperatorMatch[FileSourceScanExecTransformer]
         }
+    }
+  }
+
+  test("hash") {
+    withTempView("t") {
+      Seq[(Integer, String)]((1, "a"), (2, null), (null, "b"))
+        .toDF("a", "b")
+        .createOrReplaceTempView("t")
+      runQueryAndCompare("select hash(a, b) from t") {
+        checkGlutenOperatorMatch[ProjectExecTransformer]
+      }
+      runQueryAndCompare("select xxhash64(a, b) from t") {
+        checkGlutenOperatorMatch[ProjectExecTransformer]
+      }
     }
   }
 
@@ -1240,5 +1264,66 @@ class TestOperator extends VeloxWholeStageTransformerSuite {
         checkGlutenOperatorMatch[HashAggregateExecTransformer]
       }
     }
+  }
+
+  test("Cast date to string") {
+    withTempPath {
+      path =>
+        Seq("2023-01-01", "2023-01-02", "2023-01-03")
+          .toDF("dateColumn")
+          .select(to_date($"dateColumn", "yyyy-MM-dd").as("dateColumn"))
+          .write
+          .parquet(path.getCanonicalPath)
+        spark.read.parquet(path.getCanonicalPath).createOrReplaceTempView("view")
+        runQueryAndCompare("SELECT cast(dateColumn as string) from view") {
+          checkGlutenOperatorMatch[ProjectExecTransformer]
+        }
+    }
+  }
+
+  test("Cast date to timestamp") {
+    withTempPath {
+      path =>
+        Seq("2023-01-01", "2023-01-02", "2023-01-03")
+          .toDF("dateColumn")
+          .select(to_date($"dateColumn", "yyyy-MM-dd").as("dateColumn"))
+          .write
+          .parquet(path.getCanonicalPath)
+        spark.read.parquet(path.getCanonicalPath).createOrReplaceTempView("view")
+        runQueryAndCompare("SELECT cast(dateColumn as timestamp) from view") {
+          checkGlutenOperatorMatch[ProjectExecTransformer]
+        }
+    }
+  }
+
+  test("cast date to timestamp with timezone") {
+    sql("SET spark.sql.session.timeZone = America/Los_Angeles")
+    val dfInLA = sql("SELECT cast(date'2023-01-02 01:01:01' as timestamp) as ts")
+
+    sql("SET spark.sql.session.timeZone = Asia/Shanghai")
+    val dfInSH = sql("SELECT cast(date'2023-01-02 01:01:01' as timestamp) as ts")
+
+    // Casting date to timestamp considers configured local timezone.
+    // There is 16-hour difference between America/Los_Angeles & Asia/Shanghai.
+    val timeInMillisInLA = dfInLA.collect()(0).getTimestamp(0).getTime()
+    val timeInMillisInSH = dfInSH.collect()(0).getTimestamp(0).getTime()
+    assert(TimeUnit.MILLISECONDS.toHours(timeInMillisInLA - timeInMillisInSH) == 16)
+
+    // check ProjectExecTransformer
+    val plan1 = dfInLA.queryExecution.executedPlan
+    val plan2 = dfInSH.queryExecution.executedPlan
+    assert(plan1.find(_.isInstanceOf[ProjectExecTransformer]).isDefined)
+    assert(plan2.find(_.isInstanceOf[ProjectExecTransformer]).isDefined)
+  }
+
+  test("timestamp broadcast join") {
+    spark.range(0, 5).createOrReplaceTempView("right")
+    spark.sql("SELECT id, timestamp_micros(id) as ts from right").createOrReplaceTempView("left")
+    val expected = spark.sql("SELECT unix_micros(ts) from left")
+    val df = spark.sql(
+      "SELECT unix_micros(ts)" +
+        " FROM left RIGHT OUTER JOIN right ON left.id = right.id")
+    // Verify there is not precision loss for timestamp columns after data broadcast.
+    checkAnswer(df, expected)
   }
 }

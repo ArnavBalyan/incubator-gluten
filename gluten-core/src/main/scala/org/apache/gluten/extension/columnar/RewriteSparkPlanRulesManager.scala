@@ -16,6 +16,9 @@
  */
 package org.apache.gluten.extension.columnar
 
+import org.apache.gluten.extension.{RewriteCollect, RewriteIn}
+import org.apache.gluten.sql.shims.SparkShimLoader
+
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Attribute, SortOrder}
@@ -41,7 +44,8 @@ case class RewrittenNodeWall(originalChild: SparkPlan) extends LeafExecNode {
  *
  * Note that, this rule does not touch and tag these operators who does not need to rewrite.
  */
-class RewriteSparkPlanRulesManager(rewriteRules: Seq[Rule[SparkPlan]]) extends Rule[SparkPlan] {
+class RewriteSparkPlanRulesManager private (rewriteRules: Seq[Rule[SparkPlan]])
+  extends Rule[SparkPlan] {
 
   private def mayNeedRewrite(plan: SparkPlan): Boolean = {
     TransformHints.isTransformable(plan) && {
@@ -55,6 +59,7 @@ class RewriteSparkPlanRulesManager(rewriteRules: Seq[Rule[SparkPlan]]) extends R
         case _: FileSourceScanExec => true
         case _: ExpandExec => true
         case _: GenerateExec => true
+        case plan if SparkShimLoader.getSparkShims.isWindowGroupLimitExec(plan) => true
         case _ => false
       }
     }
@@ -123,5 +128,18 @@ class RewriteSparkPlanRulesManager(rewriteRules: Seq[Rule[SparkPlan]]) extends R
           }
         }
     }
+  }
+}
+
+object RewriteSparkPlanRulesManager {
+  def apply(): Rule[SparkPlan] = {
+    val rewriteRules = Seq(
+      RewriteIn,
+      RewriteMultiChildrenCount,
+      RewriteCollect,
+      RewriteTypedImperativeAggregate,
+      PullOutPreProject,
+      PullOutPostProject)
+    new RewriteSparkPlanRulesManager(rewriteRules)
   }
 }

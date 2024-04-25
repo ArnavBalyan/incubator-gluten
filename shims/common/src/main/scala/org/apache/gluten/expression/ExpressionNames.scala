@@ -51,6 +51,8 @@ object ExpressionNames {
   final val KURTOSIS = "kurtosis"
   final val REGR_SLOPE = "regr_slope"
   final val REGR_INTERCEPT = "regr_intercept"
+  final val REGR_SXY = "regr_sxy"
+  final val REGR_REPLACEMENT = "regr_replacement"
 
   // Function names used by Substrait plan.
   final val ADD = "add"
@@ -80,6 +82,8 @@ object ExpressionNames {
   final val NOT = "not"
   final val IS_NAN = "isnan"
   final val NANVL = "nanvl"
+  final val TRY_EVAL = "try"
+  final val TRY_ADD = "try_add"
 
   // SparkSQL String functions
   final val ASCII = "ascii"
@@ -134,6 +138,7 @@ object ExpressionNames {
   final val CEIL = "ceil"
   final val FLOOR = "floor"
   final val EXP = "exp"
+  final val EXPM1 = "expm1"
   final val POWER = "power"
   final val PMOD = "pmod"
   final val ROUND = "round"
@@ -199,6 +204,7 @@ object ExpressionNames {
   final val LAST_DAY = "last_day"
   final val MONTHS_BETWEEN = "months_between"
   final val DATE_FROM_UNIX_DATE = "date_from_unix_date"
+  final val UNIX_DATE = "unix_date"
   final val MAKE_TIMESTAMP = "make_timestamp"
   final val MAKE_YM_INTERVAL = "make_ym_interval"
   final val TO_UTC_TIMESTAMP = "to_utc_timestamp"
@@ -240,6 +246,11 @@ object ExpressionNames {
   final val ARRAY_EXCEPT = "array_except"
   final val ARRAY_REPEAT = "array_repeat"
   final val ARRAY_REMOVE = "array_remove"
+  final val FILTER = "filter"
+  final val FORALL = "forall"
+  final val EXISTS = "exists"
+  final val TRANSFORM = "transform"
+  final val SHUFFLE = "shuffle"
 
   // Map functions
   final val CREATE_MAP = "map"
@@ -282,6 +293,8 @@ object ExpressionNames {
   final val MONOTONICALLY_INCREASING_ID = "monotonically_increasing_id"
 
   // Directly use child expression transformer
+  final val KNOWN_NULLABLE = "known_nullable"
+  final val KNOWN_NOT_NULL = "known_not_null"
   final val KNOWN_FLOATING_POINT_NORMALIZED = "known_floating_point_normalized"
   final val NORMALIZE_NANAND_ZERO = "normalize_nanand_zero"
 

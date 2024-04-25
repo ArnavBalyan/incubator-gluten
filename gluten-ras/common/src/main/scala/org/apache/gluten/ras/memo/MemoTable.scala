@@ -25,11 +25,8 @@ sealed trait MemoTable[T <: AnyRef] extends MemoStore[T] {
 
   def ras: Ras[T]
 
-  override def getCluster(key: RasClusterKey): RasCluster[T]
-  override def getGroup(id: Int): RasGroup[T]
-
-  def allClusters(): Seq[RasClusterKey]
-  def allGroups(): Seq[RasGroup[T]]
+  def allClusterKeys(): Seq[RasClusterKey]
+  def allGroupIds(): Seq[Int]
 
   def getClusterPropSets(key: RasClusterKey): Set[PropertySet[T]]
 
@@ -67,13 +64,50 @@ object MemoTable {
     }
   }
 
+  private case class MemoStateImpl[T <: AnyRef](
+      override val ras: Ras[T],
+      override val clusterLookup: Map[RasClusterKey, ImmutableRasCluster[T]],
+      override val clusterDummyGroupLookup: Map[RasClusterKey, RasGroup[T]],
+      override val allGroups: Seq[RasGroup[T]],
+      idToGroup: Map[Int, RasGroup[T]])
+    extends MemoState[T] {
+    private val allClustersCopy = clusterLookup.values
+
+    override def getCluster(key: RasClusterKey): RasCluster[T] = clusterLookup(key)
+    override def getDummyGroup(key: RasClusterKey): RasGroup[T] = clusterDummyGroupLookup(key)
+    override def getGroup(id: Int): RasGroup[T] = idToGroup(id)
+    override def allClusters(): Iterable[RasCluster[T]] = allClustersCopy
+  }
+
   implicit class MemoTableImplicits[T <: AnyRef](table: MemoTable[T]) {
     def newState(): MemoState[T] = {
       val immutableClusters = table
-        .allClusters()
+        .allClusterKeys()
         .map(key => key -> ImmutableRasCluster(table.ras, table.getCluster(key)))
         .toMap
-      MemoState(table.ras, immutableClusters, table.allGroups())
+      val immutableDummyGroups = table
+        .allClusterKeys()
+        .map(key => key -> table.getDummyGroup(key))
+        .toMap
+
+      var maxGroupId = Int.MinValue
+
+      val groupMap = table
+        .allGroupIds()
+        .map {
+          gid =>
+            val group = table.getGroup(gid)
+            assert(group.id() == gid)
+            if (gid > maxGroupId) {
+              maxGroupId = gid
+            }
+            gid -> group
+        }
+        .toMap
+
+      val allGroups = (0 to maxGroupId).map(table.getGroup).toVector
+
+      MemoStateImpl(table.ras, immutableClusters, immutableDummyGroups, allGroups, groupMap)
     }
 
     def doExhaustively(func: => Unit): Unit = {
