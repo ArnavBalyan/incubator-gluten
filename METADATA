@@ -1,0 +1,10 @@
+---
+schema:
+  version: 1
+---
+owner:
+  name: hadoop-compute-drogon
+  managerEmail: suprit@uber.com
+reviewers:
+  groups:
+    - hadoop-compute-drogon
