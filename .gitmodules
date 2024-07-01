@@ -1,0 +1,4 @@
+[submodule "ep/build-velox/build/velox_ep"]
+	path = ep/build-velox/build/velox_ep
+	url = gitolite@code.uber.internal:data/velox
+	branch = gluten_branch

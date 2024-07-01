@@ -3,6 +3,6 @@
   "conduit_uri": "https://code.uberinternal.com/",
   "git.default-relative-commit": "origin/master",
   "uber.arcanist.use_non_tag_refs": true,
-  "history.immutable": true
+  "history.immutable": false
 }
 

@@ -53,8 +53,6 @@ CMakeCache.txt
 CTestTestfile.cmake
 Makefile
 cmake_install.cmake
-build/
-*-build/
 Testing/
 cmake-build-debug/
 cmake-build-release/

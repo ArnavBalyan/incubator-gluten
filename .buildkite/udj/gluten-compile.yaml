@@ -1,0 +1,12 @@
+version: 1.0
+
+uown: 0aa88f62-173b-4031-87e8-8cff8f3aa8a6 # Spark
+
+docker:
+  base-image: 127.0.0.1:5055/uber-usi/spark-gluten-udj:bkt1-produ-1719724953-e24fb
+  shell: true
+
+command:
+  export JAVA_HOME=/usr/lib/jvm/temurin-8-jdk-amd64 && ./dev/buildbundle-veloxbe-uber.sh --enable_gcs=ON --enable_hdfs=ON --enable_vcpkg=ON --enable_ep_cache=ON ${OTHER_BUILD_FLAGS}
+
+timeout_in_minutes: 360

@@ -826,4 +826,16 @@
       </plugin>
     </plugins>
   </build>
+  <distributionManagement>
+    <repository>
+      <id>central</id>
+      <name>artifactory-ha01-dca1-releases</name>
+      <url>http://artifactory.uber.internal:4587/artifactory/libs-release-local</url>
+    </repository>
+    <snapshotRepository>
+      <id>central</id>
+      <name>artifactory-ha01-dca1-releases</name>
+      <url>http://artifactory.uber.internal:4587/artifactory/libs-snapshot-local</url>
+    </snapshotRepository>
+  </distributionManagement>
 </project>
