@@ -245,7 +245,7 @@ bool SubstraitToVeloxPlanValidator::validateCast(
   core::TypedExprPtr input = exprConverter_->toVeloxExpr(castExpr.input(), inputType);
 
   // Only support cast from date to timestamp
-  if (toType->kind() == TypeKind::TIMESTAMP && !input->type()->isDate()) {
+  if (toType->kind() == TypeKind::TIMESTAMP && (!input->type()->isDate() && input->type()->kind() != TypeKind::VARCHAR)) {
     LOG_VALIDATION_MSG(
         "Casting from " + input->type()->toString() + " to " + toType->toString() + " is not supported.");
     return false;

@@ -228,6 +228,9 @@ case class WholeStageTransformer(child: SparkPlan, materializeInput: Boolean = f
     } else {
       PlanBuilder.makePlan(substraitContext, Lists.newArrayList(childCtx.root), outNames)
     }
+    // scalastyle:off println
+    val substraitPlanJson = SubstraitPlanPrinterUtil.substraitPlanToJson(planNode.toProtobuf)
+    println(s"Generated Substrait Plan: $substraitPlanJson")
 
     WholeStageTransformContext(planNode, substraitContext)
   }

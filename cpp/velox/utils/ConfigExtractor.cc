@@ -140,7 +140,7 @@ std::shared_ptr<facebook::velox::config::ConfigBase> getHiveConfig(
     }
 
     if (!gcsEndpoint.empty() && !gcsScheme.empty()) {
-      hiveConfMap[facebook::velox::connector::hive::HiveConfig::kGCSScheme] = gcsScheme;
+      // hiveConfMap[facebook::velox::connector::hive::HiveConfig::kGCSScheme] = gcsScheme;
       hiveConfMap[facebook::velox::connector::hive::HiveConfig::kGCSEndpoint] = gcsEndpoint;
     }
   }
