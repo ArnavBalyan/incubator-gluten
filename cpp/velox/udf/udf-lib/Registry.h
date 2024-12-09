@@ -7,10 +7,8 @@
 
 namespace gluten {
 
-// Declare the global registry
 std::vector<std::shared_ptr<UdfRegisterer>>& globalUdfRegisterers();
 
-// Declare the initialization function
 void initializeUdfRegisterers();
 
 } // namespace gluten
