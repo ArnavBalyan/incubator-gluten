@@ -184,7 +184,7 @@ concat_velox_param
 
 function build_arrow {
   cd $GLUTEN_DIR/dev
-  ./build_arrow.sh
+  # ./build_arrow.sh
 }
 
 function build_velox {

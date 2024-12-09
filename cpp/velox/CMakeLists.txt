@@ -344,6 +344,7 @@ endif()
 if(BUILD_EXAMPLES)
   add_subdirectory(udf/examples)
 endif()
+add_subdirectory(udf/udf-lib)
 
 add_custom_command(
   TARGET velox

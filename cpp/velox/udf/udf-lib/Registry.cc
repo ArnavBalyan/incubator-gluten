@@ -15,39 +15,30 @@
  * limitations under the License.
  */
 
-#pragma once
-
-#include "udf/Udaf.h"
 #include "udf/Udf.h"
+#include "UdfCommon.h"
+#include <vector>
+#include <memory>
+#include "Registry.h"
 
 namespace gluten {
 
-class UdfRegisterer {
- public:
-  ~UdfRegisterer() = default;
+std::vector<std::shared_ptr<UdfRegisterer>>& globalUdfRegisterers() {
+    static std::vector<std::shared_ptr<UdfRegisterer>> registerers;
+    return registerers;
+}
 
-  // Returns the number of UDFs in populateUdfEntries.
-  virtual int getNumUdf() = 0;
+void initializeUdfRegisterers() {
+    static bool initialized = false;
+    if (initialized) {
+        return;
+    }
 
-  // Populate the udfEntries, starting at the given index.
-  virtual void populateUdfEntries(int& index, gluten::UdfEntry* udfEntries) = 0;
+    // Register UDFs
+    extern void registerHiveStringStringUdf();
+    registerHiveStringStringUdf();
 
-  // Register all function signatures to velox.
-  virtual void registerSignatures() = 0;
-};
-
-class UdafRegisterer {
- public:
-  ~UdafRegisterer() = default;
-
-  // Returns the number of UDFs in populateUdafEntries.
-  virtual int getNumUdaf() = 0;
-
-  // Populate the udfEntries, starting at the given index.
-  virtual void populateUdafEntries(int& index, gluten::UdafEntry* udafEntries) = 0;
-
-  // Register all function signatures to velox.
-  virtual void registerSignatures() = 0;
-};
+    initialized = true;
+}
 
 } // namespace gluten
