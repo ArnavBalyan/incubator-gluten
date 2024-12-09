@@ -20,7 +20,9 @@
 #include <velox/functions/Registerer.h>
 #include "udf/Udf.h"
 #include "UdfCommon.h"
-#include "Registry.h" // Include the header for globalUdfRegisterers
+#include "Registry.h"
+
+// This is an example UDF. New UDFs can be created using similar structure.
 
 namespace hivestringstring {
 
