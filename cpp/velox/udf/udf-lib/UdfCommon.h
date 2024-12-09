@@ -26,10 +26,13 @@ class UdfRegisterer {
  public:
   ~UdfRegisterer() = default;
 
+  // Returns the number of UDFs in populateUdfEntries.
   virtual int getNumUdf() = 0;
 
+  // Populate the udfEntries, starting at the given index.
   virtual void populateUdfEntries(int& index, gluten::UdfEntry* udfEntries) = 0;
 
+  // Register all function signatures to velox.
   virtual void registerSignatures() = 0;
 };
 
@@ -37,10 +40,13 @@ class UdafRegisterer {
  public:
   ~UdafRegisterer() = default;
 
+  // Returns the number of UDFs in populateUdafEntries.
   virtual int getNumUdaf() = 0;
 
+  // Populate the udfEntries, starting at the given index.
   virtual void populateUdafEntries(int& index, gluten::UdafEntry* udafEntries) = 0;
 
+  // Register all function signatures to velox.
   virtual void registerSignatures() = 0;
 };
 
