@@ -16,6 +16,7 @@
  */
 package org.apache.spark.shuffle.gluten.celeborn;
 
+import org.apache.gluten.GlutenConfig;
 import org.apache.gluten.backendsapi.BackendsApiManager;
 import org.apache.gluten.exception.GlutenException;
 
@@ -24,7 +25,6 @@ import com.google.common.collect.Iterators;
 import org.apache.celeborn.client.LifecycleManager;
 import org.apache.celeborn.client.ShuffleClient;
 import org.apache.celeborn.common.CelebornConf;
-import org.apache.celeborn.common.protocol.ShuffleMode;
 import org.apache.spark.*;
 import org.apache.spark.shuffle.*;
 import org.apache.spark.shuffle.celeborn.*;
@@ -54,6 +54,12 @@ public class CelebornShuffleManager implements ShuffleManager {
   private static final String LOCAL_SHUFFLE_READER_KEY =
       "spark.sql.adaptive.localShuffleReader.enabled";
 
+  private static final String CELEBORN_COMPRESSION_CODEC_KEY =
+      CelebornConf.SHUFFLE_COMPRESSION_CODEC().key();
+
+  private static final String SPARK_CELEBORN_COMPRESSION_CODEC_KEY =
+      "spark." + CELEBORN_COMPRESSION_CODEC_KEY;
+
   private static final CelebornShuffleWriterFactory writerFactory;
 
   static {
@@ -78,6 +84,8 @@ public class CelebornShuffleManager implements ShuffleManager {
 
   private final SparkConf conf;
   private final CelebornConf celebornConf;
+  private final SparkConf rowBasedConf;
+  private final CelebornConf rowBasedCelebornConf;
   // either be "{appId}_{appAttemptId}" or "{appId}"
   private String appUniqueId;
 
@@ -89,11 +97,13 @@ public class CelebornShuffleManager implements ShuffleManager {
       ConcurrentHashMap.newKeySet();
   private final CelebornShuffleFallbackPolicyRunner fallbackPolicyRunner;
 
+  private final String celebornDefaultCodec;
+
   // for Celeborn 0.4.0
   private final Object shuffleIdTracker;
 
   // for Celeborn 0.4.0
-  private boolean throwsFetchFailure;
+  private final boolean throwsFetchFailure;
 
   public CelebornShuffleManager(SparkConf conf) {
     if (conf.getBoolean(LOCAL_SHUFFLE_READER_KEY, true)) {
@@ -110,6 +120,16 @@ public class CelebornShuffleManager implements ShuffleManager {
         CelebornUtils.createInstance(CelebornUtils.EXECUTOR_SHUFFLE_ID_TRACKER_NAME);
 
     this.throwsFetchFailure = CelebornUtils.getThrowsFetchFailure(celebornConf);
+
+    this.celebornDefaultCodec = CelebornConf.SHUFFLE_COMPRESSION_CODEC().defaultValueString();
+
+    this.rowBasedConf = conf.clone();
+    this.rowBasedCelebornConf = celebornConf.clone();
+    if ("none"
+        .equalsIgnoreCase(conf.get(SPARK_CELEBORN_COMPRESSION_CODEC_KEY, celebornDefaultCodec))) {
+      rowBasedConf.set(SPARK_CELEBORN_COMPRESSION_CODEC_KEY, celebornDefaultCodec);
+      rowBasedCelebornConf.set(CELEBORN_COMPRESSION_CODEC_KEY, celebornDefaultCodec);
+    }
   }
 
   private boolean isDriver() {
@@ -133,7 +153,8 @@ public class CelebornShuffleManager implements ShuffleManager {
       synchronized (this) {
         if (_vanillaCelebornShuffleManager == null) {
           _vanillaCelebornShuffleManager =
-              SparkUtils.instantiateClass(VANILLA_CELEBORN_SHUFFLE_MANAGER_NAME, conf, isDriver());
+              SparkUtils.instantiateClass(
+                  VANILLA_CELEBORN_SHUFFLE_MANAGER_NAME, rowBasedConf, isDriver());
         }
       }
     }
@@ -195,9 +216,14 @@ public class CelebornShuffleManager implements ShuffleManager {
     if (dependency instanceof ColumnarShuffleDependency) {
       if (fallbackPolicyRunner.applyAllFallbackPolicy(
           lifecycleManager, dependency.partitioner().numPartitions())) {
-        logger.warn("Fallback to ColumnarShuffleManager!");
-        columnarShuffleIds.add(shuffleId);
-        return columnarShuffleManager().registerShuffle(shuffleId, dependency);
+        if (GlutenConfig.getConf().enableCelebornFallback()) {
+          logger.warn("Fallback to ColumnarShuffleManager!");
+          columnarShuffleIds.add(shuffleId);
+          return columnarShuffleManager().registerShuffle(shuffleId, dependency);
+        } else {
+          throw new GlutenException(
+              "The Celeborn service(Master: " + celebornConf.masterHost() + ") is unavailable");
+        }
       } else {
         return registerCelebornShuffleHandle(shuffleId, dependency);
       }
@@ -210,15 +236,17 @@ public class CelebornShuffleManager implements ShuffleManager {
 
   @Override
   public boolean unregisterShuffle(int shuffleId) {
-    if (columnarShuffleIds.contains(shuffleId)) {
-      if (columnarShuffleManager().unregisterShuffle(shuffleId)) {
-        return columnarShuffleIds.remove(shuffleId);
-      } else {
-        return false;
-      }
+    if (columnarShuffleIds.remove(shuffleId)) {
+      return columnarShuffleManager().unregisterShuffle(shuffleId);
     }
     return CelebornUtils.unregisterShuffle(
-        lifecycleManager, shuffleClient, shuffleIdTracker, shuffleId, appUniqueId, isDriver());
+        lifecycleManager,
+        shuffleClient,
+        shuffleIdTracker,
+        shuffleId,
+        appUniqueId,
+        throwsFetchFailure,
+        isDriver());
   }
 
   @Override
@@ -237,9 +265,13 @@ public class CelebornShuffleManager implements ShuffleManager {
       lifecycleManager.stop();
       lifecycleManager = null;
     }
-    if (columnarShuffleManager() != null) {
-      columnarShuffleManager().stop();
+    if (_columnarShuffleManager != null) {
+      _columnarShuffleManager.stop();
       _columnarShuffleManager = null;
+    }
+    if (_vanillaCelebornShuffleManager != null) {
+      _vanillaCelebornShuffleManager.stop();
+      _vanillaCelebornShuffleManager = null;
     }
   }
 
@@ -259,12 +291,18 @@ public class CelebornShuffleManager implements ShuffleManager {
         }
         @SuppressWarnings("unchecked")
         CelebornShuffleHandle<K, V, V> h = ((CelebornShuffleHandle<K, V, V>) handle);
-        ShuffleClient client =
+
+        CelebornConf writerConf = celebornConf;
+        if (!(h.dependency() instanceof ColumnarShuffleDependency)) {
+          writerConf = rowBasedCelebornConf;
+        }
+
+        shuffleClient =
             CelebornUtils.getShuffleClient(
                 h.appUniqueId(),
                 h.lifecycleManagerHost(),
                 h.lifecycleManagerPort(),
-                celebornConf,
+                writerConf,
                 h.userIdentifier(),
                 false,
                 extension);
@@ -279,7 +317,7 @@ public class CelebornShuffleManager implements ShuffleManager {
                   ShuffleClient.class,
                   CelebornShuffleHandle.class,
                   TaskContext.class,
-                  boolean.class);
+                  Boolean.class);
           shuffleId = (int) celebornShuffleIdMethod.invoke(null, shuffleClient, h, context, true);
 
           Method trackMethod =
@@ -291,20 +329,15 @@ public class CelebornShuffleManager implements ShuffleManager {
           shuffleId = h.dependency().shuffleId();
         }
 
-        if (!ShuffleMode.HASH.equals(celebornConf.shuffleWriterMode())) {
-          throw new UnsupportedOperationException(
-              "Unrecognized shuffle write mode!" + celebornConf.shuffleWriterMode());
-        }
         if (h.dependency() instanceof ColumnarShuffleDependency) {
           // columnar-based shuffle
           return writerFactory.createShuffleWriterInstance(
-              shuffleId, h, context, celebornConf, client, metrics);
+              shuffleId, h, context, celebornConf, shuffleClient, metrics);
         } else {
           // row-based shuffle
           return vanillaCelebornShuffleManager().getWriter(handle, mapId, context, metrics);
         }
       } else {
-        columnarShuffleIds.add(handle.shuffleId());
         return columnarShuffleManager().getWriter(handle, mapId, context, metrics);
       }
     } catch (Exception e) {
@@ -324,6 +357,10 @@ public class CelebornShuffleManager implements ShuffleManager {
     if (handle instanceof CelebornShuffleHandle) {
       @SuppressWarnings("unchecked")
       CelebornShuffleHandle<K, ?, C> h = (CelebornShuffleHandle<K, ?, C>) handle;
+      CelebornConf readerConf = celebornConf;
+      if (!(h.dependency() instanceof ColumnarShuffleDependency)) {
+        readerConf = rowBasedCelebornConf;
+      }
       return CelebornUtils.getCelebornShuffleReader(
           h,
           startPartition,
@@ -331,7 +368,7 @@ public class CelebornShuffleManager implements ShuffleManager {
           startMapIndex,
           endMapIndex,
           context,
-          celebornConf,
+          readerConf,
           metrics,
           shuffleIdTracker);
     }

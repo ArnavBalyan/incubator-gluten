@@ -17,26 +17,22 @@
 package org.apache.spark.sql.expression
 
 import org.apache.gluten.backendsapi.velox.VeloxBackendSettings
-import org.apache.gluten.exception.GlutenException
-import org.apache.gluten.expression.{ConverterUtils, ExpressionTransformer, ExpressionType, Transformable}
-import org.apache.gluten.expression.ConverterUtils.FunctionConfig
-import org.apache.gluten.substrait.expression.ExpressionBuilder
-import org.apache.gluten.udf.UdfJniWrapper
-import org.apache.gluten.vectorized.JniWorkspace
+import org.apache.gluten.exception.{GlutenException, GlutenNotSupportException}
+import org.apache.gluten.expression._
+import org.apache.gluten.jni.JniWorkspace
 
-import org.apache.spark.{SparkConf, SparkContext, SparkFiles}
+import org.apache.spark.{SparkConf, SparkFiles}
 import org.apache.spark.deploy.SparkHadoopUtil
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.catalyst.{FunctionIdentifier, InternalRow}
-import org.apache.spark.sql.catalyst.analysis.FunctionRegistry.FunctionBuilder
-import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, ExpressionInfo}
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Cast, Expression, Unevaluable}
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateFunction
 import org.apache.spark.sql.catalyst.expressions.codegen.{CodegenContext, ExprCode}
+import org.apache.spark.sql.catalyst.types.DataTypeUtils
 import org.apache.spark.sql.errors.QueryExecutionErrors
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{DataType, StructField, StructType}
 import org.apache.spark.util.Utils
-
-import com.google.common.collect.Lists
 
 import java.io.File
 import java.net.URI
@@ -52,6 +48,7 @@ case class UserDefinedAggregateFunction(
     children: Seq[Expression],
     override val aggBufferAttributes: Seq[AttributeReference])
   extends AggregateFunction {
+  override def prettyName: String = name
 
   override def aggBufferSchema: StructType =
     StructType(
@@ -72,12 +69,38 @@ case class UserDefinedAggregateFunction(
   }
 }
 
+trait UDFSignatureBase {
+  val expressionType: ExpressionType
+  val children: Seq[DataType]
+  val variableArity: Boolean
+  val allowTypeConversion: Boolean
+}
+
+case class UDFSignature(
+    expressionType: ExpressionType,
+    children: Seq[DataType],
+    variableArity: Boolean,
+    allowTypeConversion: Boolean)
+  extends UDFSignatureBase
+
+case class UDAFSignature(
+    expressionType: ExpressionType,
+    children: Seq[DataType],
+    variableArity: Boolean,
+    allowTypeConversion: Boolean,
+    intermediateAttrs: Seq[AttributeReference])
+  extends UDFSignatureBase
+
 case class UDFExpression(
     name: String,
+    alias: String,
     dataType: DataType,
     nullable: Boolean,
     children: Seq[Expression])
-  extends Transformable {
+  extends Unevaluable
+  with Transformable {
+  override def nodeName: String = alias
+
   override protected def withNewChildrenInternal(
       newChildren: IndexedSeq[Expression]): Expression = {
     this.copy(children = newChildren)
@@ -90,50 +113,52 @@ case class UDFExpression(
         this.getClass.getSimpleName +
           ": getTransformer called before children transformer initialized.")
     }
-    (args: Object) => {
-      val transformers = childrenTransformers.map(_.doTransform(args))
-      val functionMap = args.asInstanceOf[java.util.HashMap[String, java.lang.Long]]
-      val functionId = ExpressionBuilder.newScalarFunction(
-        functionMap,
-        ConverterUtils.makeFuncName(name, children.map(_.dataType), FunctionConfig.REQ))
 
-      val typeNode = ConverterUtils.getTypeNode(dataType, nullable)
-      ExpressionBuilder.makeScalarFunction(
-        functionId,
-        Lists.newArrayList(transformers: _*),
-        typeNode)
-    }
+    GenericExpressionTransformer(name, childrenTransformers, this)
   }
 }
 
 object UDFResolver extends Logging {
-  private val UDFNames = mutable.HashSet[String]()
+  val UDFNames = mutable.HashSet[String]()
   // (udf_name, arg1, arg2, ...) => return type
-  private val UDFMap = mutable.HashMap[(String, Seq[DataType]), ExpressionType]()
+  private val UDFMap = mutable.HashMap[String, mutable.ListBuffer[UDFSignature]]()
 
-  private val UDAFNames = mutable.HashSet[String]()
+  val UDAFNames = mutable.HashSet[String]()
   // (udaf_name, arg1, arg2, ...) => return type, intermediate attributes
   private val UDAFMap =
-    mutable.HashMap[(String, Seq[DataType]), (ExpressionType, Seq[AttributeReference])]()
+    mutable.HashMap[String, mutable.ListBuffer[UDAFSignature]]()
 
   private val LIB_EXTENSION = ".so"
 
   // Called by JNI.
-  def registerUDF(name: String, returnType: Array[Byte], argTypes: Array[Byte]): Unit = {
+  def registerUDF(
+      name: String,
+      returnType: Array[Byte],
+      argTypes: Array[Byte],
+      variableArity: Boolean,
+      allowTypeConversion: Boolean): Unit = {
     registerUDF(
       name,
       ConverterUtils.parseFromBytes(returnType),
-      ConverterUtils.parseFromBytes(argTypes))
+      ConverterUtils.parseFromBytes(argTypes),
+      variableArity,
+      allowTypeConversion)
   }
 
   private def registerUDF(
       name: String,
       returnType: ExpressionType,
-      argTypes: ExpressionType): Unit = {
+      argTypes: ExpressionType,
+      variableArity: Boolean,
+      allowTypeConversion: Boolean): Unit = {
     assert(argTypes.dataType.isInstanceOf[StructType])
-    UDFMap.put(
-      (name, argTypes.dataType.asInstanceOf[StructType].fields.map(_.dataType)),
-      returnType)
+    val v =
+      UDFMap.getOrElseUpdate(name, mutable.ListBuffer[UDFSignature]())
+    v += UDFSignature(
+      returnType,
+      argTypes.dataType.asInstanceOf[StructType].fields.map(_.dataType),
+      variableArity,
+      allowTypeConversion)
     UDFNames += name
     logInfo(s"Registered UDF: $name($argTypes) -> $returnType")
   }
@@ -142,12 +167,16 @@ object UDFResolver extends Logging {
       name: String,
       returnType: Array[Byte],
       argTypes: Array[Byte],
-      intermediateTypes: Array[Byte]): Unit = {
+      intermediateTypes: Array[Byte],
+      variableArity: Boolean,
+      enableTypeConversion: Boolean): Unit = {
     registerUDAF(
       name,
       ConverterUtils.parseFromBytes(returnType),
       ConverterUtils.parseFromBytes(argTypes),
-      ConverterUtils.parseFromBytes(intermediateTypes)
+      ConverterUtils.parseFromBytes(intermediateTypes),
+      variableArity,
+      enableTypeConversion
     )
   }
 
@@ -155,19 +184,30 @@ object UDFResolver extends Logging {
       name: String,
       returnType: ExpressionType,
       argTypes: ExpressionType,
-      intermediateTypes: ExpressionType): Unit = {
+      intermediateTypes: ExpressionType,
+      variableArity: Boolean,
+      allowTypeConversion: Boolean): Unit = {
     assert(argTypes.dataType.isInstanceOf[StructType])
-    assert(intermediateTypes.dataType.isInstanceOf[StructType])
 
-    val aggBufferAttributes =
-      intermediateTypes.dataType.asInstanceOf[StructType].fields.zipWithIndex.map {
-        case (f, index) =>
-          AttributeReference(s"inter_$index", f.dataType, f.nullable)()
+    val aggBufferAttributes: Seq[AttributeReference] =
+      intermediateTypes.dataType match {
+        case StructType(fields) =>
+          fields.zipWithIndex.map {
+            case (f, index) =>
+              AttributeReference(s"agg_inter_$index", f.dataType, f.nullable)()
+          }
+        case t =>
+          Seq(AttributeReference(s"agg_inter", t)())
       }
-    UDAFMap.put(
-      (name, argTypes.dataType.asInstanceOf[StructType].fields.map(_.dataType)),
-      (returnType, aggBufferAttributes)
-    )
+
+    val v =
+      UDAFMap.getOrElseUpdate(name, mutable.ListBuffer[UDAFSignature]())
+    v += UDAFSignature(
+      returnType,
+      argTypes.dataType.asInstanceOf[StructType].fields.map(_.dataType),
+      variableArity,
+      allowTypeConversion,
+      aggBufferAttributes)
     UDAFNames += name
     logInfo(s"Registered UDAF: $name($argTypes) -> $returnType")
   }
@@ -204,8 +244,9 @@ object UDFResolver extends Logging {
 
     udfLibPaths match {
       case Some(paths) =>
+        // Set resolved paths to the internal config to parse on native side.
         sparkConf.set(
-          VeloxBackendSettings.GLUTEN_VELOX_UDF_LIB_PATHS,
+          VeloxBackendSettings.GLUTEN_VELOX_INTERNAL_UDF_LIB_PATHS,
           getAllLibraries(sparkConf, isDriver, paths))
       case None =>
     }
@@ -291,58 +332,149 @@ object UDFResolver extends Logging {
       .mkString(",")
   }
 
-  def getFunctionSignatures: Seq[(FunctionIdentifier, ExpressionInfo, FunctionBuilder)] = {
-    val sparkContext = SparkContext.getActive.get
-    val sparkConf = sparkContext.conf
-    val udfLibPaths = sparkConf.getOption(VeloxBackendSettings.GLUTEN_VELOX_UDF_LIB_PATHS)
+  private def checkAllowTypeConversion: Boolean = {
+    SQLConf.get
+      .getConfString(VeloxBackendSettings.GLUTEN_VELOX_UDF_ALLOW_TYPE_CONVERSION, "false")
+      .toBoolean
+  }
 
-    udfLibPaths match {
+  def getUdfExpression(name: String, alias: String)(children: Seq[Expression]): UDFExpression = {
+    def errorMessage: String =
+      s"UDF $name -> ${children.map(_.dataType.simpleString).mkString(", ")} is not registered."
+
+    val allowTypeConversion = checkAllowTypeConversion
+    val signatures =
+      UDFMap.getOrElse(name, throw new GlutenNotSupportException(errorMessage));
+    signatures.find(sig => tryBind(sig, children.map(_.dataType), allowTypeConversion)) match {
+      case Some(sig) =>
+        UDFExpression(
+          name,
+          alias,
+          sig.expressionType.dataType,
+          sig.expressionType.nullable,
+          if (!allowTypeConversion && !sig.allowTypeConversion) children
+          else applyCast(children, sig)
+        )
       case None =>
-        Seq.empty
-      case Some(_) =>
-        new UdfJniWrapper().getFunctionSignatures()
-
-        UDFNames.map {
-          name =>
-            (
-              new FunctionIdentifier(name),
-              new ExpressionInfo(classOf[UDFExpression].getName, name),
-              (e: Seq[Expression]) => getUdfExpression(name)(e))
-        }.toSeq ++ UDAFNames.map {
-          name =>
-            (
-              new FunctionIdentifier(name),
-              new ExpressionInfo(classOf[UserDefinedAggregateFunction].getName, name),
-              (e: Seq[Expression]) => getUdafExpression(name)(e))
-        }.toSeq
+        throw new GlutenNotSupportException(errorMessage)
     }
   }
 
-  private def getUdfExpression(name: String)(children: Seq[Expression]) = {
-    val expressionType =
-      UDFMap.getOrElse(
-        (name, children.map(_.dataType)),
-        throw new UnsupportedOperationException(
-          s"UDF $name -> ${children.map(_.dataType.simpleString).mkString(", ")} " +
-            s"is not registered.")
+  def getUdafExpression(name: String)(children: Seq[Expression]): UserDefinedAggregateFunction = {
+    def errorMessage: String =
+      s"UDAF $name -> ${children.map(_.dataType.simpleString).mkString(", ")} is not registered."
+
+    val allowTypeConversion = checkAllowTypeConversion
+    val signatures =
+      UDAFMap.getOrElse(
+        name,
+        throw new GlutenNotSupportException(errorMessage)
       )
-    UDFExpression(name, expressionType.dataType, expressionType.nullable, children)
+    signatures.find(sig => tryBind(sig, children.map(_.dataType), allowTypeConversion)) match {
+      case Some(sig) =>
+        UserDefinedAggregateFunction(
+          name,
+          sig.expressionType.dataType,
+          sig.expressionType.nullable,
+          if (!allowTypeConversion && !sig.allowTypeConversion) children
+          else applyCast(children, sig),
+          sig.intermediateAttrs
+        )
+      case None =>
+        throw new GlutenNotSupportException(errorMessage)
+    }
   }
 
-  private def getUdafExpression(name: String)(children: Seq[Expression]) = {
-    val (expressionType, aggBufferAttributes) =
-      UDAFMap.getOrElse(
-        (name, children.map(_.dataType)),
-        throw new UnsupportedOperationException(
-          s"UDAF $name -> ${children.map(_.dataType.simpleString).mkString(", ")} " +
-            s"is not registered.")
-      )
+  private def tryBind(
+      sig: UDFSignatureBase,
+      requiredDataTypes: Seq[DataType],
+      allowTypeConversion: Boolean): Boolean = {
+    if (
+      !tryBindStrict(sig, requiredDataTypes) && (allowTypeConversion || sig.allowTypeConversion)
+    ) {
+      tryBindWithTypeConversion(sig, requiredDataTypes)
+    } else {
+      true
+    }
+  }
 
-    UserDefinedAggregateFunction(
-      name,
-      expressionType.dataType,
-      expressionType.nullable,
-      children,
-      aggBufferAttributes)
+  // Returns true if required data types match the function signature.
+  // If the function signature is variable arity, the number of the last argument can be zero
+  // or more.
+  private def tryBindWithTypeConversion(
+      sig: UDFSignatureBase,
+      requiredDataTypes: Seq[DataType]): Boolean = {
+    tryBind0(sig, requiredDataTypes, Cast.canCast)
+  }
+
+  private def tryBindStrict(sig: UDFSignatureBase, requiredDataTypes: Seq[DataType]): Boolean = {
+    tryBind0(sig, requiredDataTypes, DataTypeUtils.sameType)
+  }
+
+  private def tryBind0(
+      sig: UDFSignatureBase,
+      requiredDataTypes: Seq[DataType],
+      checkType: (DataType, DataType) => Boolean): Boolean = {
+    if (!sig.variableArity) {
+      sig.children.size == requiredDataTypes.size &&
+      requiredDataTypes
+        .zip(sig.children)
+        .forall { case (required, candidate) => checkType(required, candidate) }
+    } else {
+      // If variableArity is true, there must be at least one argument in the signature.
+      if (requiredDataTypes.size < sig.children.size - 1) {
+        false
+      } else if (requiredDataTypes.size == sig.children.size - 1) {
+        requiredDataTypes
+          .zip(sig.children.dropRight(1))
+          .forall { case (required, candidate) => checkType(required, candidate) }
+      } else {
+        val varArgStartIndex = sig.children.size - 1
+        // First check all var args has the same type with the last argument of the signature.
+        if (
+          !requiredDataTypes
+            .drop(varArgStartIndex)
+            .forall(argType => checkType(argType, sig.children.last))
+        ) {
+          false
+        } else if (varArgStartIndex == 0) {
+          // No fixed args.
+          true
+        } else {
+          // Whether fixed args matches.
+          requiredDataTypes
+            .dropRight(1 + requiredDataTypes.size - sig.children.size)
+            .zip(sig.children.dropRight(1))
+            .forall { case (required, candidate) => checkType(required, candidate) }
+        }
+      }
+    }
+  }
+
+  private def applyCast(children: Seq[Expression], sig: UDFSignatureBase): Seq[Expression] = {
+    def maybeCast(expr: Expression, toType: DataType): Expression = {
+      if (!expr.dataType.sameType(toType)) {
+        Cast(expr, toType)
+      } else {
+        expr
+      }
+    }
+
+    if (!sig.variableArity) {
+      children.zip(sig.children).map { case (expr, toType) => maybeCast(expr, toType) }
+    } else {
+      val fixedArgs = Math.min(children.size, sig.children.size)
+      val newChildren = children.take(fixedArgs).zip(sig.children.take(fixedArgs)).map {
+        case (expr, toType) => maybeCast(expr, toType)
+      }
+      if (children.size > sig.children.size) {
+        val varArgType = sig.children.last
+        newChildren ++ children.takeRight(children.size - sig.children.size).map {
+          expr => maybeCast(expr, varArgType)
+        }
+      } else {
+        newChildren
+      }
+    }
   }
 }

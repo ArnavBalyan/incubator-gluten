@@ -46,13 +46,19 @@ case class IcebergScanTransformer(
     commonPartitionValues = commonPartitionValues
   ) {
 
+  protected[this] def supportsBatchScan(scan: Scan): Boolean = {
+    IcebergScanTransformer.supportsBatchScan(scan)
+  }
+
   override def filterExprs(): Seq[Expression] = pushdownFilters.getOrElse(Seq.empty)
 
-  override def getPartitionSchema: StructType = GlutenIcebergSourceUtil.getPartitionSchema(scan)
+  override lazy val getPartitionSchema: StructType =
+    GlutenIcebergSourceUtil.getReadPartitionSchema(scan)
 
   override def getDataSchema: StructType = new StructType()
 
-  override def getInputFilePathsInternal: Seq[String] = Seq.empty
+  // TODO: get root paths from table.
+  override def getRootPathsInternal: Seq[String] = Seq.empty
 
   override lazy val fileFormat: ReadFileFormat = GlutenIcebergSourceUtil.getFileFormat(scan)
 
@@ -63,7 +69,7 @@ case class IcebergScanTransformer(
       filteredPartitions,
       outputPartitioning)
     groupedPartitions.zipWithIndex.map {
-      case (p, index) => GlutenIcebergSourceUtil.genSplitInfo(p, index)
+      case (p, index) => GlutenIcebergSourceUtil.genSplitInfo(p, index, getPartitionSchema)
     }
   }
 
@@ -77,19 +83,23 @@ case class IcebergScanTransformer(
   }
   // Needed for tests
   private[execution] def getKeyGroupPartitioning: Option[Seq[Expression]] = keyGroupedPartitioning
+
+  override def nodeName: String = "Iceberg" + super.nodeName
 }
 
 object IcebergScanTransformer {
-  def apply(
-      batchScan: BatchScanExec,
-      newPartitionFilters: Seq[Expression]): IcebergScanTransformer = {
+  def apply(batchScan: BatchScanExec): IcebergScanTransformer = {
     new IcebergScanTransformer(
       batchScan.output,
       batchScan.scan,
-      newPartitionFilters,
+      batchScan.runtimeFilters,
       table = SparkShimLoader.getSparkShims.getBatchScanExecTable(batchScan),
       keyGroupedPartitioning = SparkShimLoader.getSparkShims.getKeyGroupedPartitioning(batchScan),
       commonPartitionValues = SparkShimLoader.getSparkShims.getCommonPartitionValues(batchScan)
     )
+  }
+
+  def supportsBatchScan(scan: Scan): Boolean = {
+    scan.getClass.getName == "org.apache.iceberg.spark.source.SparkBatchQueryScan"
   }
 }

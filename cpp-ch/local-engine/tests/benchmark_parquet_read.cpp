@@ -18,7 +18,6 @@
 #include <DataTypes/DataTypeDate32.h>
 #include <DataTypes/DataTypeString.h>
 #include <IO/ReadBufferFromFile.h>
-#include <Parser/SerializedPlanParser.h>
 #include <Processors/Executors/PullingPipelineExecutor.h>
 #include <Processors/Formats/Impl/ArrowColumnToCHColumn.h>
 #include <Processors/Formats/Impl/ParquetBlockInputFormat.h>
@@ -31,6 +30,7 @@
 #include <tests/gluten_test_util.h>
 #include <Poco/Util/MapConfiguration.h>
 #include <Common/DebugUtils.h>
+#include <Common/QueryContext.h>
 
 namespace
 {
@@ -69,7 +69,7 @@ void BM_ColumnIndexRead_Old(benchmark::State & state)
     for (auto _ : state)
     {
         auto in = std::make_unique<ReadBufferFromFile>(file);
-        auto format = std::make_shared<ParquetBlockInputFormat>(*in, header, format_settings, 1, 8192);
+        auto format = std::make_shared<ParquetBlockInputFormat>(*in, header, format_settings, 1, 1, 8192);
         auto pipeline = QueryPipeline(std::move(format));
         auto reader = std::make_unique<PullingPipelineExecutor>(pipeline);
         while (reader->pull(res))
@@ -93,7 +93,7 @@ void BM_ParquetReadDate32(benchmark::State & state)
     for (auto _ : state)
     {
         auto in = std::make_unique<ReadBufferFromFile>(file);
-        auto format = std::make_shared<ParquetBlockInputFormat>(*in, header, format_settings, 1, 8192);
+        auto format = std::make_shared<ParquetBlockInputFormat>(*in, header, format_settings, 1, 1, 8192);
         auto pipeline = QueryPipeline(std::move(format));
         auto reader = std::make_unique<PullingPipelineExecutor>(pipeline);
         while (reader->pull(res))
@@ -124,7 +124,7 @@ void BM_OptimizedParquetReadString(benchmark::State & state)
 
         auto builder = std::make_unique<QueryPipelineBuilder>();
         builder->init(
-            Pipe(std::make_shared<local_engine::SubstraitFileSource>(local_engine::SerializedPlanParser::global_context, header, files)));
+            Pipe(std::make_shared<local_engine::SubstraitFileSource>(local_engine::QueryContext::globalContext(), header, files)));
         auto pipeline = QueryPipelineBuilder::getPipeline(std::move(*builder));
         auto reader = PullingPipelineExecutor(pipeline);
         while (reader.pull(res))
@@ -156,7 +156,7 @@ void BM_OptimizedParquetReadDate32(benchmark::State & state)
 
         auto builder = std::make_unique<QueryPipelineBuilder>();
         builder->init(
-            Pipe(std::make_shared<local_engine::SubstraitFileSource>(local_engine::SerializedPlanParser::global_context, header, files)));
+            Pipe(std::make_shared<local_engine::SubstraitFileSource>(local_engine::QueryContext::globalContext(), header, files)));
         auto pipeline = QueryPipelineBuilder::getPipeline(std::move(*builder));
         auto reader = PullingPipelineExecutor(pipeline);
         while (reader.pull(res))
@@ -178,17 +178,16 @@ substrait::ReadRel::LocalFiles createLocalFiles(const std::string & filename, co
 
     auto config = Poco::AutoPtr(new Poco::Util::MapConfiguration());
     config->setBool("use_local_format", use_local_format);
-    local_engine::SerializedPlanParser::global_context->setConfig(config);
+    local_engine::QueryContext::globalMutableContext()->setConfig(config);
 
     return files;
 }
 
-void doRead(const substrait::ReadRel::LocalFiles & files, const DB::ActionsDAGPtr & pushDown, const DB::Block & header)
+void doRead(const substrait::ReadRel::LocalFiles & files, const std::optional<DB::ActionsDAG> & pushDown, const DB::Block & header)
 {
     const auto builder = std::make_unique<DB::QueryPipelineBuilder>();
-    const auto source
-        = std::make_shared<local_engine::SubstraitFileSource>(local_engine::SerializedPlanParser::global_context, header, files);
-    source->setKeyCondition(pushDown, local_engine::SerializedPlanParser::global_context);
+    const auto source = std::make_shared<local_engine::SubstraitFileSource>(local_engine::QueryContext::globalContext(), header, files);
+    source->setKeyCondition(pushDown, local_engine::QueryContext::globalContext());
     builder->init(DB::Pipe(source));
     auto pipeline = DB::QueryPipelineBuilder::getPipeline(std::move(*builder));
     auto reader = DB::PullingPipelineExecutor(pipeline);
@@ -215,12 +214,12 @@ void BM_ColumnIndexRead_Filter_ReturnAllResult(benchmark::State & state)
     const std::string filter1 = "l_shipdate is not null AND l_shipdate <= toDate32('1998-09-01')";
     const substrait::ReadRel::LocalFiles files = createLocalFiles(filename, true);
     const AnotherRowType schema = local_engine::test::readParquetSchema(filename);
-    const ActionsDAGPtr pushDown = local_engine::test::parseFilter(filter1, schema);
+    auto pushDown = local_engine::test::parseFilter(filter1, schema);
     const Block header = {toBlockRowType(schema)};
 
     for (auto _ : state)
         doRead(files, pushDown, header);
-    local_engine::SerializedPlanParser::global_context->setConfig(Poco::AutoPtr(new Poco::Util::MapConfiguration()));
+    local_engine::QueryContext::globalMutableContext()->setConfig(Poco::AutoPtr(new Poco::Util::MapConfiguration()));
 }
 
 void BM_ColumnIndexRead_Filter_ReturnHalfResult(benchmark::State & state)
@@ -232,12 +231,12 @@ void BM_ColumnIndexRead_Filter_ReturnHalfResult(benchmark::State & state)
     const std::string filter1 = "l_orderkey is not null AND l_orderkey > 300977829";
     const substrait::ReadRel::LocalFiles files = createLocalFiles(filename, true);
     const AnotherRowType schema = local_engine::test::readParquetSchema(filename);
-    const ActionsDAGPtr pushDown = local_engine::test::parseFilter(filter1, schema);
+    auto pushDown = local_engine::test::parseFilter(filter1, schema);
     const Block header = {toBlockRowType(schema)};
 
     for (auto _ : state)
         doRead(files, pushDown, header);
-    local_engine::SerializedPlanParser::global_context->setConfig(Poco::AutoPtr(new Poco::Util::MapConfiguration()));
+    local_engine::QueryContext::globalMutableContext()->setConfig(Poco::AutoPtr(new Poco::Util::MapConfiguration()));
 }
 
 }

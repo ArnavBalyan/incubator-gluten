@@ -23,10 +23,12 @@ struct UdafEntry {
   const char* name;
   const char* dataType;
 
-  size_t numArgs;
+  int numArgs;
   const char** argTypes;
 
   const char* intermediateType{nullptr};
+  bool variableArity{false};
+  bool allowTypeConversion{false};
 };
 
 #define GLUTEN_GET_NUM_UDAF getNumUdaf
@@ -37,4 +39,5 @@ struct UdafEntry {
 
 #define GLUTEN_REGISTER_UDAF registerUdf
 #define DEFINE_REGISTER_UDAF extern "C" void GLUTEN_REGISTER_UDAF()
+
 } // namespace gluten

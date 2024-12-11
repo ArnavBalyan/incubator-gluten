@@ -16,7 +16,7 @@
  */
 package org.apache.spark.shuffle.utils
 
-import org.apache.gluten.backendsapi.BackendsApiManager
+import org.apache.gluten.backendsapi.clickhouse.CHValidatorApi
 import org.apache.gluten.execution.SortExecTransformer
 import org.apache.gluten.expression.ExpressionConverter
 import org.apache.gluten.substrait.SubstraitContext
@@ -199,6 +199,7 @@ class RangePartitionerBoundsGenerator[K: Ordering: ClassTag, V](
             case d: DecimalType =>
               val decimal = row.getDecimal(i, d.precision, d.scale).toString()
               node.put("value", decimal)
+            case _: TimestampType => node.put("value", row.getLong(i))
             case _ =>
               throw new IllegalArgumentException(
                 s"Unsupported data type ${ordering.dataType.toString}")
@@ -244,6 +245,7 @@ object RangePartitionerBoundsGenerator {
       case _: StringType => true
       case _: DateType => true
       case _: DecimalType => true
+      case _: TimestampType => true
       case _ => false
     }
   }
@@ -259,8 +261,9 @@ object RangePartitionerBoundsGenerator {
           break
         }
         if (
-          !ordering.child.isInstanceOf[Attribute] && !BackendsApiManager.getSettings
-            .supportShuffleWithProject(rangePartitioning, child)
+          !ordering.child.isInstanceOf[Attribute] && !CHValidatorApi.supportShuffleWithProject(
+            rangePartitioning,
+            child)
         ) {
           enableRangePartitioning = false
           break

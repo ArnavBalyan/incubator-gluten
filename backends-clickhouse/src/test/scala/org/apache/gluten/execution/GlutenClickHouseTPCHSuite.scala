@@ -18,7 +18,7 @@ package org.apache.gluten.execution
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{Row, TestUtils}
-import org.apache.spark.sql.catalyst.optimizer.BuildLeft
+import org.apache.spark.sql.catalyst.optimizer.{BuildLeft, BuildRight}
 import org.apache.spark.sql.types.{DecimalType, StructType}
 
 // Some sqls' line length exceeds 100
@@ -47,7 +47,7 @@ class GlutenClickHouseTPCHSuite extends GlutenClickHouseTPCHAbstractSuite {
         }
         assert(scanExec.size == 1)
 
-        assert(scanExec(0).nodeName.startsWith("Scan mergetree"))
+        assert(scanExec(0).nodeName.startsWith("ScanTransformer mergetree"))
 
         val sortExec = df.queryExecution.executedPlan.collect {
           case sortExec: SortExecTransformer => sortExec
@@ -73,7 +73,11 @@ class GlutenClickHouseTPCHSuite extends GlutenClickHouseTPCHAbstractSuite {
           val shjBuildLeft = df.queryExecution.executedPlan.collect {
             case shj: ShuffledHashJoinExecTransformerBase if shj.joinBuildSide == BuildLeft => shj
           }
-          assert(shjBuildLeft.size == 2)
+          assert(shjBuildLeft.size == 1)
+          val shjBuildRight = df.queryExecution.executedPlan.collect {
+            case shj: ShuffledHashJoinExecTransformerBase if shj.joinBuildSide == BuildRight => shj
+          }
+          assert(shjBuildRight.size == 1)
       }
     }
   }
@@ -147,7 +151,7 @@ class GlutenClickHouseTPCHSuite extends GlutenClickHouseTPCHAbstractSuite {
   }
 
   test("TPCH Q16") {
-    runTPCHQuery(16, noFallBack = false) { df => }
+    runTPCHQuery(16) { df => }
   }
 
   test("TPCH Q17") {
@@ -171,7 +175,7 @@ class GlutenClickHouseTPCHSuite extends GlutenClickHouseTPCHAbstractSuite {
   }
 
   test("TPCH Q21") {
-    runTPCHQuery(21, noFallBack = false) { df => }
+    runTPCHQuery(21) { df => }
   }
 
   test("TPCH Q22") {
@@ -480,6 +484,111 @@ class GlutenClickHouseTPCHSuite extends GlutenClickHouseTPCHAbstractSuite {
     compareResultsAgainstVanillaSpark(select_sql_3, true, { _ => })
 
     spark.sql(table_drop_sql)
+  }
+
+  test("GLUTEN-5904 NaN values from stddev") {
+    val sql1 =
+      """
+        |select a, stddev(b/c) from (select * from values (1,2, 1), (1,3,0) as data(a,b,c))
+        |group by a
+        |""".stripMargin
+    compareResultsAgainstVanillaSpark(sql1, true, { _ => })
+    val sql2 =
+      """
+        |select a, stddev(b) from (select * from values (1,2, 1) as data(a,b,c)) group by a
+        |""".stripMargin
+    compareResultsAgainstVanillaSpark(sql2, true, { _ => })
+
+  }
+
+  test("existence join") {
+    spark.sql("create table t1(a int, b int) using parquet")
+    spark.sql("create table t2(a int, b int) using parquet")
+    spark.sql("insert into t1 values(0, 0), (1, 2), (2, 3), (3, 4), (null, 5), (6, null)")
+    spark.sql("insert into t2 values(0, 0), (1, 2), (2, 3), (2,4), (null, 5), (6, null)")
+
+    val sql1 = """
+                 |select * from t1 where exists (select 1 from t2 where t1.a = t2.a) or t1.a > 1
+                 |""".stripMargin
+    compareResultsAgainstVanillaSpark(sql1, true, { _ => })
+
+    val sql2 = """
+                 |select * from t1 where exists (select 1 from t2 where t1.a = t2.a) or t1.a > 3
+                 |""".stripMargin
+    compareResultsAgainstVanillaSpark(sql2, true, { _ => })
+
+    val sql3 = """
+                 |select * from t1 where exists (select 1 from t2 where t1.a = t2.a) or t1.b > 0
+                 |""".stripMargin
+    compareResultsAgainstVanillaSpark(sql3, true, { _ => })
+
+    val sql4 = """
+                 |select * from t1 where exists (select 1 from t2
+                 |where t1.a = t2.a and t1.b = t2.b) or t1.a > 0
+                 |""".stripMargin
+    compareResultsAgainstVanillaSpark(sql4, true, { _ => })
+
+    spark.sql("drop table t1")
+    spark.sql("drop table t2")
+  }
+
+  test("gluten-7077 bug in cross broad cast join") {
+    spark.sql("create table cross_join_t(a bigint, b string, c string) using parquet");
+    var sql = """
+                | insert into cross_join_t
+                | select id as a, cast(id as string) as b,
+                |   concat('1231231232323232322', cast(id as string)) as c
+                | from range(0, 100000)
+                |""".stripMargin
+    spark.sql(sql)
+    sql = """
+            | select * from cross_join_t as t1 full join cross_join_t as t2 limit 10
+            |""".stripMargin
+    compareResultsAgainstVanillaSpark(sql, true, { _ => })
+    spark.sql("drop table cross_join_t")
+  }
+
+  test("Pushdown aggregation pre-projection ahead expand") {
+    spark.sql("create table t1(a bigint, b bigint, c bigint, d bigint) using parquet")
+    spark.sql("insert into t1 values(1,2,3,4), (1,2,4,5), (1,3,4,5), (2,3,4,5)")
+    var sql = """
+                | select a, b , sum(d+c) from t1 group by a,b with cube
+                | order by a,b
+                |""".stripMargin
+    compareResultsAgainstVanillaSpark(sql, true, { _ => })
+    sql = """
+            | select a, b , sum(a+c), sum(b+d) from t1 group by a,b with cube
+            | order by a,b
+            |""".stripMargin
+    compareResultsAgainstVanillaSpark(sql, true, { _ => })
+    spark.sql("drop table t1")
+  }
+
+  test("GLUTEN-7780 fix split diff") {
+    val sql = "select split(concat('a|b|c', cast(id as string)), '\\|')" +
+      ", split(concat('a|b|c', cast(id as string)), '\\\\|')" +
+      ", split(concat('a|b|c', cast(id as string)), '|') from range(10)"
+    compareResultsAgainstVanillaSpark(sql, true, { _ => })
+  }
+  test("GLUTEN-8142 duplicated columns in group by") {
+    sql("create table test_8142 (day string, rtime int, uid string, owner string) using parquet")
+    sql("insert into test_8142 values ('2024-09-01', 123, 'user1', 'owner1')")
+    sql("insert into test_8142 values ('2024-09-01', 123, 'user1', 'owner1')")
+    sql("insert into test_8142 values ('2024-09-02', 567, 'user2', 'owner2')")
+    compareResultsAgainstVanillaSpark(
+      """
+        |select days, rtime, uid, owner, day1
+        |from (
+        | select day1 as days, rtime, uid, owner, day1
+        | from (
+        |   select distinct coalesce(day, "today") as day1, rtime, uid, owner
+        |   from test_8142 where day = '2024-09-01'
+        | )) group by days, rtime, uid, owner, day1
+        |""".stripMargin,
+      true,
+      { _ => }
+    )
+    sql("drop table test_8142")
   }
 }
 // scalastyle:off line.size.limit

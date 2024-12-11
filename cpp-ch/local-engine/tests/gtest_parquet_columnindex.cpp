@@ -14,29 +14,48 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 #include "config.h"
 #if USE_PARQUET
+#include <charconv>
 #include <ranges>
 #include <string>
+#include <Columns/ColumnString.h>
 #include <DataTypes/DataTypeString.h>
-#include <DataTypes/DataTypesNumber.h>
+#include <IO/ReadBufferFromFile.h>
 #include <Interpreters/ActionsVisitor.h>
+#include <Interpreters/Context.h>
 #include <Interpreters/ExpressionActions.h>
-#include <Parser/SerializedPlanParser.h>
 #include <Parsers/ExpressionListParsers.h>
-
-#include <Processors/Formats/Impl/ArrowBufferedStreams.h>
 #include <Storages/Parquet/ArrowUtils.h>
 #include <Storages/Parquet/ColumnIndexFilter.h>
 #include <Storages/Parquet/ParquetConverter.h>
 #include <Storages/Parquet/RowRanges.h>
 #include <Storages/Parquet/VectorizedParquetRecordReader.h>
+#include <boost/iterator/counting_iterator.hpp>
 #include <gtest/gtest.h>
 #include <parquet/page_index.h>
 #include <parquet/schema.h>
 #include <parquet/statistics.h>
 #include <tests/gluten_test_util.h>
+#include <Common/BlockTypeUtils.h>
+#include <Common/QueryContext.h>
+
+#define ASSERT_DURATION_LE(secs, stmt) \
+    { \
+        std::promise<bool> completed; \
+        auto stmt_future = completed.get_future(); \
+        std::thread( \
+            [&](std::promise<bool> & completed) \
+            { \
+                stmt; \
+                completed.set_value(true); \
+            }, \
+            std::ref(completed)) \
+            .detach(); \
+        if (stmt_future.wait_for(std::chrono::seconds(secs)) == std::future_status::timeout) \
+            GTEST_FATAL_FAILURE_("       timed out (> " #secs " seconds). Check code for infinite loops"); \
+    }
+
 
 namespace DB::ErrorCodes
 {
@@ -59,6 +78,9 @@ class PrimitiveNodeBuilder
     parquet::Repetition::type repetition_ = parquet::Repetition::UNDEFINED;
     parquet::ConvertedType::type converted_type_ = parquet::ConvertedType::NONE;
     parquet::Type::type physical_type_ = parquet::Type::UNDEFINED;
+    int length_ = -1;
+    int precision_ = -1;
+    int scale_ = -1;
 
 public:
     PrimitiveNodeBuilder & as(parquet::ConvertedType::type converted_type)
@@ -67,13 +89,25 @@ public:
         return *this;
     }
 
+    PrimitiveNodeBuilder & with_length(int length)
+    {
+        length_ = length;
+        return *this;
+    }
+    PrimitiveNodeBuilder & asDecimal(int precision, int scale)
+    {
+        converted_type_ = parquet::ConvertedType::DECIMAL;
+        precision_ = precision;
+        scale_ = scale;
+        return *this;
+    }
     parquet::schema::NodePtr named(const std::string & name) const
     {
         assert(!name.empty());
         if (physical_type_ == parquet::Type::UNDEFINED)
             throw Exception(ErrorCodes::LOGICAL_ERROR, "Unsupported physical type");
         return parquet::schema::PrimitiveNode::Make(
-            name, repetition_, physical_type_, converted_type_, /*length=*/-1, /*precision=*/-1, /*scale=*/-1, /*field_id*/ -1);
+            name, repetition_, physical_type_, converted_type_, length_, precision_, scale_, /*field_id*/ -1);
     }
     parquet::ColumnDescriptor descriptor(const std::string & name) const { return {named(name), /*max_definition_level=*/1, 0}; }
     static PrimitiveNodeBuilder optional(parquet::Type::type physical_type)
@@ -144,6 +178,13 @@ public:
         return *this;
     }
 
+    CIBuilder & addSamePages(size_t num, int64_t nullCount, const std::string & min, const std::string & max)
+    {
+        for (size_t i = 0; i < num; ++i)
+            addPage(nullCount, min, max);
+        return *this;
+    }
+
     parquet::ColumnIndexPtr build() const
     {
         const parquet::ColumnDescriptor descr(node_, /*max_definition_level=*/1, 0);
@@ -166,6 +207,13 @@ public:
     {
         row_index_.push_back(previouse_count_);
         previouse_count_ += row_count;
+        return *this;
+    }
+
+    OIBuilder & addSamePages(size_t num, size_t row_count)
+    {
+        for (size_t i = 0; i < num; ++i)
+            addPage(row_count);
         return *this;
     }
 
@@ -279,6 +327,13 @@ static const CIBuilder c5 = CIBuilder(PNB::optional(parquet::Type::INT64).named(
 static const OIBuilder o5 = OIBuilder().addPage(1).addPage(29);
 static const parquet::ColumnDescriptor d5 = c5.descr();
 
+// GLUTEN-7179 - test customer.c_mktsegment = 'BUILDING'
+static const CIBuilder c6 = CIBuilder(PNB::optional(parquet::Type::BYTE_ARRAY).as(parquet::ConvertedType::UTF8).named("c_mktsegment"))
+                                .addSamePages(75, 0, "AUTOMOBILE", "MACHINERY")
+                                .addPage(0, "AUTOMOBILE", "FURNITURE");
+static const OIBuilder o6 = OIBuilder().addSamePages(77, 10);
+static const parquet::ColumnDescriptor d6 = c6.descr();
+
 local_engine::ColumnIndexStore buildTestColumnIndexStore()
 {
     local_engine::ColumnIndexStore result;
@@ -287,6 +342,7 @@ local_engine::ColumnIndexStore buildTestColumnIndexStore()
     result[d3.name()] = std::move(local_engine::ColumnIndex::create(&d3, c3.build(), o3.build()));
     result[d4.name()] = std::move(local_engine::ColumnIndex::create(&d4, nullptr, o3.build()));
     result[d5.name()] = std::move(local_engine::ColumnIndex::create(&d5, c5.build(), o5.build()));
+    result[d6.name()] = std::move(local_engine::ColumnIndex::create(&d6, c6.build(), o6.build()));
     return result;
 }
 
@@ -298,6 +354,7 @@ AnotherRowType buildTestRowType()
     result.emplace_back(toAnotherFieldType(d3));
     result.emplace_back(toAnotherFieldType(d4));
     result.emplace_back(toAnotherFieldType(d5));
+    result.emplace_back(toAnotherFieldType(d6));
     return result;
 }
 
@@ -341,7 +398,7 @@ void testCondition(const std::string & exp, const std::vector<size_t> & expected
     static const AnotherRowType name_and_types = buildTestRowType();
     static const local_engine::ColumnIndexStore column_index_store = buildTestColumnIndexStore();
     const local_engine::ColumnIndexFilter filter(
-        local_engine::test::parseFilter(exp, name_and_types), local_engine::SerializedPlanParser::global_context);
+        local_engine::test::parseFilter(exp, name_and_types).value(), local_engine::QueryContext::globalContext());
     assertRows(filter.calculateRowRanges(column_index_store, TOTALSIZE), expectedRows);
 }
 
@@ -450,17 +507,25 @@ TEST(ColumnIndex, FilteringWithAllNullPages)
     // testCondition("column5 == 1234567", TOTALSIZE);
     // testCondition("column5 >= 1234567", TOTALSIZE);
 }
+
+TEST(ColumnIndex, GLUTEN_7179_INFINTE_LOOP)
+{
+    using namespace test_utils;
+    ASSERT_DURATION_LE(10, { testCondition("c_mktsegment = 'BUILDING'", 760); })
+}
+
 TEST(ColumnIndex, FilteringWithNotFoundColumnName)
 {
     using namespace test_utils;
+    using namespace local_engine;
     const local_engine::ColumnIndexStore column_index_store = buildTestColumnIndexStore();
 
     {
         // COLUMN5 is not found in the column_index_store,
         const AnotherRowType upper_name_and_types{{"COLUMN5", BIGINT()}};
         const local_engine::ColumnIndexFilter filter_upper(
-            local_engine::test::parseFilter("COLUMN5 in (7, 20)", upper_name_and_types),
-            local_engine::SerializedPlanParser::global_context);
+            local_engine::test::parseFilter("COLUMN5 in (7, 20)", upper_name_and_types).value(),
+            local_engine::QueryContext::globalContext());
         assertRows(
             filter_upper.calculateRowRanges(column_index_store, TOTALSIZE),
             std::vector(boost::counting_iterator<size_t>(0), boost::counting_iterator<size_t>(TOTALSIZE)));
@@ -469,8 +534,8 @@ TEST(ColumnIndex, FilteringWithNotFoundColumnName)
     {
         const AnotherRowType lower_name_and_types{{"column5", BIGINT()}};
         const local_engine::ColumnIndexFilter filter_lower(
-            local_engine::test::parseFilter("column5 in (7, 20)", lower_name_and_types),
-            local_engine::SerializedPlanParser::global_context);
+            local_engine::test::parseFilter("column5 in (7, 20)", lower_name_and_types).value(),
+            local_engine::QueryContext::globalContext());
         assertRows(filter_lower.calculateRowRanges(column_index_store, TOTALSIZE), {});
     }
 }
@@ -483,13 +548,22 @@ using ParquetValue = std::variant<
     parquet::DoubleType::c_type,
     parquet::ByteArrayType::c_type>;
 
-ParquetValue to(const DB::Field & value, const parquet::ColumnDescriptor & desc)
+template <typename PhysicalType>
+void doComapre(
+    const parquet::ColumnDescriptor & descriptor, const DB::Field & value, const std::function<void(const ParquetValue &)> & compare)
+{
+    local_engine::ToParquet<PhysicalType> to_parquet;
+    compare({to_parquet.as(value, descriptor)});
+}
+
+void with_actual(const DB::Field & value, const parquet::ColumnDescriptor & desc, const std::function<void(const ParquetValue &)> & compare)
 {
     using namespace local_engine;
     switch (desc.physical_type())
     {
         case parquet::Type::BOOLEAN:
-            break;
+            doComapre<parquet::BooleanType>(desc, value, compare);
+            return;
         case parquet::Type::INT32: {
             switch (desc.converted_type())
             {
@@ -500,7 +574,8 @@ ParquetValue to(const DB::Field & value, const parquet::ColumnDescriptor & desc)
                 case parquet::ConvertedType::INT_16:
                 case parquet::ConvertedType::INT_32:
                 case parquet::ConvertedType::NONE:
-                    return {parquetCast<parquet::Int32Type>(value)};
+                    doComapre<parquet::Int32Type>(desc, value, compare);
+                    return;
                 default:
                     break;
             }
@@ -512,34 +587,82 @@ ParquetValue to(const DB::Field & value, const parquet::ColumnDescriptor & desc)
                 case parquet::ConvertedType::INT_64:
                 case parquet::ConvertedType::UINT_64:
                 case parquet::ConvertedType::NONE:
-                    return {parquetCast<parquet::Int64Type>(value)};
+                    doComapre<parquet::Int64Type>(desc, value, compare);
+                    return;
                 default:
                     break;
             }
             break;
         case parquet::Type::INT96:
+            // doComapre<parquet::Int96Type>(desc, value, compare);
             break;
         case parquet::Type::FLOAT:
-            return {value.get<Float32>()};
+            doComapre<parquet::FloatType>(desc, value, compare);
+            return;
         case parquet::Type::DOUBLE:
-            return {value.get<Float64>()};
-            break;
+            doComapre<parquet::DoubleType>(desc, value, compare);
+            return;
         case parquet::Type::BYTE_ARRAY:
             switch (desc.converted_type())
             {
                 case parquet::ConvertedType::UTF8:
-                    return parquetCast<parquet::ByteArrayType>(value);
+                    doComapre<parquet::ByteArrayType>(desc, value, compare);
+                    return;
                 default:
                     break;
             }
             break;
         case parquet::Type::FIXED_LEN_BYTE_ARRAY:
+            // doComapre<parquet::FLBAType>(desc, value, compare);
             break;
         case parquet::Type::UNDEFINED:
             break;
     }
-    abort();
+    ASSERT_TRUE(false) << "Unsupported physical type: [" << TypeToString(desc.physical_type()) << "] with logical type: ["
+                       << desc.logical_type()->ToString() << "] with converted type: [" << ConvertedTypeToString(desc.converted_type())
+                       << "]";
 }
+
+// for gtest
+namespace parquet
+{
+void PrintTo(const ByteArray & val, std::ostream * os)
+{
+    *os << '[' << std::hex;
+
+    for (size_t i = 0; i < val.len; ++i)
+    {
+        *os << std::setw(2) << std::setfill('0') << static_cast<int>(val.ptr[i]);
+        if (i != val.len - 1)
+            *os << ", ";
+    }
+    *os << ']';
+}
+}
+TEST(ColumnIndex, DecimalField)
+{
+    // we can't define `operator==` for parquet::FLBAType
+    Field value = DecimalField<Decimal128>(Int128(300000000), 4);
+    local_engine::ToParquet<parquet::FLBAType> to_parquet;
+    const parquet::ColumnDescriptor desc
+        = PNB::optional(parquet::Type::FIXED_LEN_BYTE_ARRAY).asDecimal(38, 4).with_length(13).descriptor("column1");
+    uint8_t expected_a[13]{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x11, 0xE1, 0xA3, 0x0};
+    const parquet::ByteArray expected{13, expected_a};
+    const parquet::ByteArray actual{13, to_parquet.as(value, desc).ptr};
+    ASSERT_EQ(actual, expected);
+
+
+    /// Exception test, only in release node
+#ifdef NDEBUG
+    Field unsupport = DecimalField<Decimal256>(Int256(300000000), 4);
+    EXPECT_THROW(to_parquet.as(unsupport, desc), DB::Exception);
+
+    const parquet::ColumnDescriptor error
+        = PNB::optional(parquet::Type::FIXED_LEN_BYTE_ARRAY).asDecimal(38, 4).with_length(18).descriptor("column1");
+    EXPECT_THROW(to_parquet.as(value, error), DB::Exception);
+#endif
+}
+
 
 TEST(ColumnIndex, Field)
 {
@@ -551,7 +674,6 @@ TEST(ColumnIndex, Field)
         parquet::ColumnDescriptor, //desc
         ParquetValue //expected value
         >;
-    using PNB = test_utils::PrimitiveNodeBuilder;
     const std::vector<TESTDATA> datas{
         {"int32_UINT_8",
          static_cast<UInt8>(1),
@@ -579,8 +701,7 @@ TEST(ColumnIndex, Field)
             const auto & value = std::get<1>(data);
             const auto & desc = std::get<2>(data);
             const auto & expected = std::get<3>(data);
-            const auto actual = to(value, desc);
-            ASSERT_EQ(actual, expected) << name;
+            with_actual(value, desc, [&](const ParquetValue & actual) { ASSERT_EQ(actual, expected) << name; });
         });
 
     const std::vector<std::pair<String, Field>> primitive_fields{
@@ -612,7 +733,7 @@ struct ReadStatesParam
     ReadStatesParam() = default;
 
     ReadStatesParam(local_engine::RowRanges ranges, std::shared_ptr<local_engine::ColumnReadState> states)
-        : row_ranges(std::move(ranges)), read_states(std::move(states)){};
+        : row_ranges(std::move(ranges)), read_states(std::move(states)) {};
 
     local_engine::RowRanges row_ranges;
     std::shared_ptr<local_engine::ColumnReadState> read_states;
@@ -966,6 +1087,7 @@ TEST_P(TestBuildPageReadStates, BuildPageReadStates)
 
 TEST(ColumnIndex, VectorizedParquetRecordReader)
 {
+    using namespace local_engine;
     //TODO: move test parquet to s3 and download to CI machine.
     const std::string filename
         = "/home/chang/test/tpch/parquet/Index/60001/part-00000-76ef9b89-f292-495f-9d0d-98325f3d8956-c000.snappy.parquet";
@@ -976,7 +1098,7 @@ TEST(ColumnIndex, VectorizedParquetRecordReader)
     static const AnotherRowType name_and_types{{"11", BIGINT()}};
     const auto filterAction = local_engine::test::parseFilter("`11` = 10 or `11` = 50", name_and_types);
     auto column_index_filter
-        = std::make_shared<local_engine::ColumnIndexFilter>(filterAction, local_engine::SerializedPlanParser::global_context);
+        = std::make_shared<local_engine::ColumnIndexFilter>(filterAction.value(), local_engine::QueryContext::globalContext());
 
     Block blockHeader({{BIGINT(), "11"}, {STRING(), "18"}});
 

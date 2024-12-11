@@ -17,9 +17,10 @@
 package org.apache.gluten.backendsapi.velox
 
 import org.apache.gluten.GlutenNumaBindingInfo
-import org.apache.gluten.backendsapi.IteratorApi
+import org.apache.gluten.backendsapi.{BackendsApiManager, IteratorApi}
 import org.apache.gluten.execution._
-import org.apache.gluten.metrics.IMetrics
+import org.apache.gluten.iterator.Iterators
+import org.apache.gluten.metrics.{IMetrics, IteratorMetricsJniWrapper}
 import org.apache.gluten.sql.shims.SparkShimLoader
 import org.apache.gluten.substrait.plan.PlanNode
 import org.apache.gluten.substrait.rel.{LocalFilesBuilder, LocalFilesNode, SplitInfo}
@@ -27,25 +28,23 @@ import org.apache.gluten.substrait.rel.LocalFilesNode.ReadFileFormat
 import org.apache.gluten.utils._
 import org.apache.gluten.vectorized._
 
-import org.apache.spark.{SparkConf, SparkContext, TaskContext}
+import org.apache.spark.{SparkConf, TaskContext}
 import org.apache.spark.internal.Logging
-import org.apache.spark.rdd.RDD
 import org.apache.spark.softaffinity.SoftAffinity
 import org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils
 import org.apache.spark.sql.catalyst.util.{DateFormatter, TimestampFormatter}
 import org.apache.spark.sql.connector.read.InputPartition
 import org.apache.spark.sql.execution.datasources.{FilePartition, PartitionedFile}
 import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.sql.types.{BinaryType, DateType, Decimal, DecimalType, StructType, TimestampType}
-import org.apache.spark.sql.utils.OASPackageBridge.InputMetricsWrapper
+import org.apache.spark.sql.types._
+import org.apache.spark.sql.utils.SparkInputMetricsUtil.InputMetricsWrapper
 import org.apache.spark.sql.vectorized.ColumnarBatch
-import org.apache.spark.util.ExecutorManager
+import org.apache.spark.util.{ExecutorManager, SparkDirectoryUtil}
 
 import java.lang.{Long => JLong}
 import java.nio.charset.StandardCharsets
 import java.time.ZoneOffset
-import java.util.{ArrayList => JArrayList, HashMap => JHashMap, Map => JMap}
-import java.util.concurrent.TimeUnit
+import java.util.{ArrayList => JArrayList, HashMap => JHashMap, Map => JMap, UUID}
 
 import scala.collection.JavaConverters._
 
@@ -55,10 +54,18 @@ class VeloxIteratorApi extends IteratorApi with Logging {
       partition: InputPartition,
       partitionSchema: StructType,
       fileFormat: ReadFileFormat,
-      metadataColumnNames: Seq[String]): SplitInfo = {
+      metadataColumnNames: Seq[String],
+      properties: Map[String, String]): SplitInfo = {
     partition match {
       case f: FilePartition =>
-        val (paths, starts, lengths, partitionColumns, metadataColumns) =
+        val (
+          paths,
+          starts,
+          lengths,
+          fileSizes,
+          modificationTimes,
+          partitionColumns,
+          metadataColumns) =
           constructSplitInfo(partitionSchema, f.files, metadataColumnNames)
         val preferredLocations =
           SoftAffinity.getFilePartitionLocations(f)
@@ -67,10 +74,14 @@ class VeloxIteratorApi extends IteratorApi with Logging {
           paths,
           starts,
           lengths,
+          fileSizes,
+          modificationTimes,
           partitionColumns,
           metadataColumns,
           fileFormat,
-          preferredLocations.toList.asJava)
+          preferredLocations.toList.asJava,
+          mapAsJavaMap(properties)
+        )
       case _ =>
         throw new UnsupportedOperationException(s"Unsupported input partition.")
     }
@@ -102,8 +113,10 @@ class VeloxIteratorApi extends IteratorApi with Logging {
     val paths = new JArrayList[String]()
     val starts = new JArrayList[JLong]
     val lengths = new JArrayList[JLong]()
+    val fileSizes = new JArrayList[JLong]()
+    val modificationTimes = new JArrayList[JLong]()
     val partitionColumns = new JArrayList[JMap[String, String]]
-    var metadataColumns = new JArrayList[JMap[String, String]]
+    val metadataColumns = new JArrayList[JMap[String, String]]
     files.foreach {
       file =>
         // The "file.filePath" in PartitionedFile is not the original encoded path, so the decoded
@@ -113,6 +126,14 @@ class VeloxIteratorApi extends IteratorApi with Logging {
             .decode(file.filePath.toString, StandardCharsets.UTF_8.name()))
         starts.add(JLong.valueOf(file.start))
         lengths.add(JLong.valueOf(file.length))
+        val (fileSize, modificationTime) =
+          SparkShimLoader.getSparkShims.getFileSizeAndModificationTime(file)
+        (fileSize, modificationTime) match {
+          case (Some(size), Some(time)) =>
+            fileSizes.add(JLong.valueOf(size))
+            modificationTimes.add(JLong.valueOf(time))
+          case _ => // Do nothing
+        }
         val metadataColumn =
           SparkShimLoader.getSparkShims.generateMetadataColumns(file, metadataColumnNames)
         metadataColumns.add(metadataColumn)
@@ -140,12 +161,11 @@ class VeloxIteratorApi extends IteratorApi with Logging {
         }
         partitionColumns.add(partitionColumn)
     }
-    (paths, starts, lengths, partitionColumns, metadataColumns)
+    (paths, starts, lengths, fileSizes, modificationTimes, partitionColumns, metadataColumns)
   }
 
-  override def injectWriteFilesTempPath(path: String): Unit = {
-    val transKernel = NativePlanEvaluator.create()
-    transKernel.injectWriteFilesTempPath(path)
+  override def injectWriteFilesTempPath(path: String, fileName: String): Unit = {
+    NativePlanEvaluator.injectWriteFilesTempPath(path)
   }
 
   /** Generate Iterator[ColumnarBatch] for first stage. */
@@ -153,7 +173,7 @@ class VeloxIteratorApi extends IteratorApi with Logging {
       inputPartition: BaseGlutenPartition,
       context: TaskContext,
       pipelineTime: SQLMetric,
-      updateInputMetrics: (InputMetricsWrapper) => Unit,
+      updateInputMetrics: InputMetricsWrapper => Unit,
       updateNativeMetrics: IMetrics => Unit,
       partitionIndex: Int,
       inputIterators: Seq[Iterator[ColumnarBatch]] = Seq()): Iterator[ColumnarBatch] = {
@@ -161,34 +181,40 @@ class VeloxIteratorApi extends IteratorApi with Logging {
       inputPartition.isInstanceOf[GlutenPartition],
       "Velox backend only accept GlutenPartition.")
 
-    val beforeBuild = System.nanoTime()
     val columnarNativeIterators =
-      new JArrayList[GeneralInIterator](inputIterators.map {
-        iter => new ColumnarBatchInIterator(iter.asJava)
+      new JArrayList[ColumnarBatchInIterator](inputIterators.map {
+        iter => new ColumnarBatchInIterator(BackendsApiManager.getBackendName, iter.asJava)
       }.asJava)
-    val transKernel = NativePlanEvaluator.create()
+    val transKernel = NativePlanEvaluator.create(BackendsApiManager.getBackendName)
 
     val splitInfoByteArray = inputPartition
       .asInstanceOf[GlutenPartition]
       .splitInfosByteArray
-    val resIter: GeneralOutIterator =
+    val spillDirPath = SparkDirectoryUtil
+      .get()
+      .namespace("gluten-spill")
+      .mkChildDirRoundRobin(UUID.randomUUID.toString)
+      .getAbsolutePath
+    val resIter: ColumnarBatchOutIterator =
       transKernel.createKernelWithBatchIterator(
         inputPartition.plan,
         splitInfoByteArray,
         columnarNativeIterators,
-        partitionIndex)
-    pipelineTime += TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - beforeBuild)
+        partitionIndex,
+        BackendsApiManager.getSparkPlanExecApiInstance.rewriteSpillPath(spillDirPath)
+      )
+    val itrMetrics = IteratorMetricsJniWrapper.create()
 
     Iterators
       .wrap(resIter.asScala)
       .protectInvocationFlow()
       .recycleIterator {
-        updateNativeMetrics(resIter.getMetrics)
+        updateNativeMetrics(itrMetrics.fetch(resIter))
         updateInputMetrics(TaskContext.get().taskMetrics().inputMetrics)
         resIter.close()
       }
       .recyclePayload(batch => batch.close())
-      .addToPipelineTime(pipelineTime)
+      .collectLifeMillis(millis => pipelineTime += millis)
       .asInterruptible(context)
       .create()
   }
@@ -209,41 +235,37 @@ class VeloxIteratorApi extends IteratorApi with Logging {
 
     ExecutorManager.tryTaskSet(numaBindingInfo)
 
-    val transKernel = NativePlanEvaluator.create()
+    val transKernel = NativePlanEvaluator.create(BackendsApiManager.getBackendName)
     val columnarNativeIterator =
-      new JArrayList[GeneralInIterator](inputIterators.map {
-        iter => new ColumnarBatchInIterator(iter.asJava)
+      new JArrayList[ColumnarBatchInIterator](inputIterators.map {
+        iter => new ColumnarBatchInIterator(BackendsApiManager.getBackendName, iter.asJava)
       }.asJava)
+    val spillDirPath = SparkDirectoryUtil
+      .get()
+      .namespace("gluten-spill")
+      .mkChildDirRoundRobin(UUID.randomUUID.toString)
+      .getAbsolutePath
     val nativeResultIterator =
       transKernel.createKernelWithBatchIterator(
         rootNode.toProtobuf.toByteArray,
         // Final iterator does not contain scan split, so pass empty split info to native here.
         new Array[Array[Byte]](0),
         columnarNativeIterator,
-        partitionIndex
+        partitionIndex,
+        BackendsApiManager.getSparkPlanExecApiInstance.rewriteSpillPath(spillDirPath)
       )
+    val itrMetrics = IteratorMetricsJniWrapper.create()
 
     Iterators
       .wrap(nativeResultIterator.asScala)
+      .protectInvocationFlow()
       .recycleIterator {
-        updateNativeMetrics(nativeResultIterator.getMetrics)
+        updateNativeMetrics(itrMetrics.fetch(nativeResultIterator))
         nativeResultIterator.close()
       }
       .recyclePayload(batch => batch.close())
-      .addToPipelineTime(pipelineTime)
+      .collectLifeMillis(millis => pipelineTime += millis)
       .create()
   }
   // scalastyle:on argcount
-
-  /** Generate Native FileScanRDD, currently only for ClickHouse Backend. */
-  override def genNativeFileScanRDD(
-      sparkContext: SparkContext,
-      wsCxt: WholeStageTransformContext,
-      splitInfos: Seq[SplitInfo],
-      scan: BasicScanExecTransformer,
-      numOutputRows: SQLMetric,
-      numOutputBatches: SQLMetric,
-      scanTime: SQLMetric): RDD[ColumnarBatch] = {
-    throw new UnsupportedOperationException("Cannot support to generate Native FileScanRDD.")
-  }
 }

@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include "compute/VeloxBackend.h"
 #include "memory/AllocationListener.h"
 #include "memory/MemoryAllocator.h"
 #include "memory/MemoryManager.h"
@@ -25,12 +26,10 @@
 
 namespace gluten {
 
+// Make sure the class is thread safe
 class VeloxMemoryManager final : public MemoryManager {
  public:
-  VeloxMemoryManager(
-      const std::string& name,
-      std::shared_ptr<MemoryAllocator> allocator,
-      std::unique_ptr<AllocationListener> listener);
+  VeloxMemoryManager(const std::string& kind, std::unique_ptr<AllocationListener> listener);
 
   ~VeloxMemoryManager() override;
   VeloxMemoryManager(const VeloxMemoryManager&) = delete;
@@ -60,18 +59,26 @@ class VeloxMemoryManager final : public MemoryManager {
 
   void hold() override;
 
+  /// Test only
+  MemoryAllocator* allocator() const {
+    return listenableAlloc_.get();
+  }
+
+  AllocationListener* getListener() const {
+    return listener_.get();
+  }
+
  private:
   bool tryDestructSafe();
-
-  std::string name_;
 
 #ifdef GLUTEN_ENABLE_HBM
   std::unique_ptr<VeloxMemoryAllocator> wrappedAlloc_;
 #endif
 
   // This is a listenable allocator used for arrow.
-  std::unique_ptr<MemoryAllocator> glutenAlloc_;
+  std::unique_ptr<MemoryAllocator> listenableAlloc_;
   std::unique_ptr<AllocationListener> listener_;
+  std::unique_ptr<AllocationListener> blockListener_;
   std::unique_ptr<arrow::MemoryPool> arrowPool_;
 
   std::unique_ptr<facebook::velox::memory::MemoryManager> veloxMemoryManager_;
@@ -82,8 +89,8 @@ class VeloxMemoryManager final : public MemoryManager {
 
 /// Not tracked by Spark and should only used in test or validation.
 inline std::shared_ptr<gluten::VeloxMemoryManager> getDefaultMemoryManager() {
-  static auto memoryManager = std::make_shared<gluten::VeloxMemoryManager>(
-      "test", gluten::defaultMemoryAllocator(), gluten::AllocationListener::noop());
+  static auto memoryManager =
+      std::make_shared<gluten::VeloxMemoryManager>(gluten::kVeloxBackendKind, gluten::AllocationListener::noop());
   return memoryManager;
 }
 

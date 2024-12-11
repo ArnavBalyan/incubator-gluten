@@ -28,9 +28,12 @@
 
 #include <google/protobuf/wrappers.pb.h>
 
+#include "velox/connectors/hive/TableHandle.h"
 #include "velox/type/Type.h"
 
 namespace gluten {
+
+typedef ::facebook::velox::connector::hive::HiveColumnHandle::ColumnType ColumnType;
 
 /// This class contains some common functions used to parse Substrait
 /// components, and convert them into recognizable representations.
@@ -41,17 +44,15 @@ class SubstraitParser {
       const ::substrait::NamedStruct& namedStruct,
       bool asLowerCase = false);
 
-  /// Used to parse partition & metadata columns from Substrait NamedStruct.
-  static void parsePartitionAndMetadataColumns(
-      const ::substrait::NamedStruct& namedStruct,
-      std::vector<bool>& isPartitionColumns,
-      std::vector<bool>& isMetadataColumns);
+  /// Used to parse column types from Substrait NamedStruct.
+  static void parseColumnTypes(const ::substrait::NamedStruct& namedStruct, std::vector<ColumnType>& columnTypes);
 
   /// Parse Substrait Type to Velox type.
   static facebook::velox::TypePtr parseType(const ::substrait::Type& substraitType, bool asLowerCase = false);
 
-  /// Parse Substrait ReferenceSegment.
-  static int32_t parseReferenceSegment(const ::substrait::Expression::ReferenceSegment& refSegment);
+  /// Parse Substrait ReferenceSegment and extract the field index. Return false if the segment is not a valid unnested
+  /// field.
+  static bool parseReferenceSegment(const ::substrait::Expression::ReferenceSegment& refSegment, uint32_t& fieldIndex);
 
   /// Make names in the format of {prefix}_{index}.
   static std::vector<std::string> makeNames(const std::string& prefix, int size);

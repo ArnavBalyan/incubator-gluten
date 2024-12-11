@@ -7,19 +7,19 @@ parent: Getting-Started
 
 # Supported Version
 
-| Type  | Version                         |
-|-------|---------------------------------|
-| Spark | 3.2.2, 3.3.1, 3.4.2, 3.5.1(wip) |
-| OS    | Ubuntu20.04/22.04, Centos7/8    |
-| jdk   | openjdk8/jdk17                  |
-| scala | 2.12                            |
+| Type  | Version                      |
+|-------|------------------------------|
+| Spark | 3.2.2, 3.3.1, 3.4.3, 3.5.1   |
+| OS    | Ubuntu20.04/22.04, Centos7/8 |
+| jdk   | openjdk8/jdk17               |
+| scala | 2.12                         |
 
 # Prerequisite
 
 Currently, Gluten+Velox backend is only tested on **Ubuntu20.04/Ubuntu22.04/Centos7/Centos8**.
 Other kinds of OS support are still in progress. The long term goal is to support several common OS and conda env deployment.
 
-Gluten only fully tested in CI with 3.2.2, 3.3.1 and 3.4.2. We will add/update supported/tested versions according to the upstream changes.
+Currently, the officially supported Spark versions are 3.2.2, 3.3.1, 3.4.3 and 3.5.1.
 
 We need to set up the `JAVA_HOME` env. Currently, Gluten supports **java 8** and **java 17**.
 
@@ -55,48 +55,41 @@ It's recommended to use buildbundle-veloxbe.sh to build gluten in one script.
 
 **For x86_64 build**
 
+First time build for all supported spark versions.
+
 ```bash
-cd /path/to/gluten
-
-## The script builds jars for all spark version
 ./dev/buildbundle-veloxbe.sh
-
-## After a complete build, if you need to re-build the project and only some gluten code is changed,
-## you can use the following command to skip building velox and protobuf.
-# ./dev/buildbundle-veloxbe.sh --enable_ep_cache=ON --build_protobuf=OFF
-## If you have the same error with issue-3283, you need to add the parameter `--compile_arrow_java=ON`
 ```
 
-**For aarch64 build:**
+After a complete build, if only some gluten code is changed, you can use the following command to skip building velox/arrow and
+setting up build dependencies.
+
+```bash
+./dev/buildbundle-veloxbe.sh --enable_ep_cache=ON --build_arrow=OFF --run_setup_script=OFF
+```
+
+**For aarch64 build**
 
 ```bash
 export CPU_TARGET="aarch64"
 
-cd /path/to/gluten
-
-./dev/builddeps-veloxbe.sh
+./dev/buildbundle-veloxbe.sh
 ```
 
-**Build Velox separately**
+**Step-by-step build**
 
-Gluten still uses Velox under oap-project and does daily update with upstream(meta) Velox.
-
-Scripts under `/path/to/gluten/ep/build-velox/src` provide `get_velox.sh` and `build_velox.sh` to build Velox separately, you could use these scripts with custom repo/branch/location.
-
-Velox provides arrow/parquet lib. Gluten cpp module need a required VELOX_HOME parsed by --velox_home, if you specify custom ep location, make sure these variables be passed correctly.
+Alternative to the above one-step build, you can follow the below guide for step-by-step build.
+Currently, Gluten is using a [forked Velox](https://github.com/oap-project/velox/) which is daily updated based on [upstream Velox](https://github.com/facebookincubator/velox).
 
 ```bash
-## fetch Velox and compile
-cd /path/to/gluten/ep/build-velox/src/
-## you could use custom ep location by --velox_home=custom_path, make sure specify --velox_home in build_velox.sh too.
-./get_velox.sh
-## make sure specify --velox_home if you have specified it in get_velox.sh.
-./build_velox.sh
 
-## compile Gluten cpp module
-cd /path/to/gluten/cpp
-## if you use custom velox_home, make sure specified here by --velox_home 
-./compile.sh --build_velox_backend=ON
+# Build arrow with some patches applied. We need these slight code changes till arrow is upgraded
+# to 17.0.0 or newer versions.
+./dev/builddeps-veloxbe.sh build_arrow
+
+./dev/builddeps-veloxbe.sh build_velox
+
+./dev/builddeps-veloxbe.sh build_gluten_cpp
 
 ## compile Gluten java module and create package jar
 cd /path/to/gluten
@@ -104,21 +97,31 @@ cd /path/to/gluten
 mvn clean package -Pbackends-velox -Pceleborn -Puniffle -Pspark-3.2 -DskipTests
 # For spark3.3.x
 mvn clean package -Pbackends-velox -Pceleborn -Puniffle -Pspark-3.3 -DskipTests
+# For spark3.4.x
+mvn clean package -Pbackends-velox -Pceleborn -Puniffle -Pspark-3.4 -DskipTests
+# For spark3.5.x
+mvn clean package -Pbackends-velox -Pceleborn -Puniffle -Pspark-3.5 -DskipTests
 ```
 
-notes：The compilation of `Velox` using the script of `build_velox.sh` may fail caused by `oom`, you can prevent this failure by using the user command of `export NUM_THREADS=4` before executing the above scripts.
+Notes： Building Velox may fail caused by OOM. You can prevent this failure by adjusting `NUM_THREADS` (e.g., `export NUM_THREADS=4`) before building Gluten/Velox.
 
-Once building successfully, the Jar file will be generated in the directory: package/target/\<gluten-jar\> for Spark 3.2.x/Spark 3.3.x.
+After the above build process, the Jar file will be generated under `package/target/`.
 
 ## Dependency library deployment
 
-With config `enable_vcpkg=ON`, the dependency libraries will be built and statically linked into libvelox.so and libgluten.so, which is packed into the gluten-jar. In this way, only the gluten-jar is needed to add to `spark.<driver|executor>.extraClassPath` and spark will deploy the jar to each worker node. It's better to build the static version using a clean docker image without any extra libraries installed. On host with some libraries like jemalloc installed, the script may crash with odd message. You may need to uninstall those libraries to get a clean host.
+With build option `enable_vcpkg=ON`, all dependency libraries will be statically linked to `libvelox.so` and `libgluten.so` which are packed into the gluten-jar.
+In this way, only the gluten-jar is needed to add to `spark.<driver|executor>.extraClassPath` and spark will deploy the jar to each worker node. It's better to build
+the static version using a clean docker image without any extra libraries installed. On host with some libraries like jemalloc installed, the script may crash with
+odd message. You may need to uninstall those libraries to get a clean host. We strongly recommend user to build Gluten in this way to avoid dependency lacking issue.
 
-With config `enable_vcpkg=OFF`, the dependency libraries won't be statically linked, instead the script will install the libraries to system then pack the dependency libraries into another jar named gluten-package-${Maven-artifact-version}.jar. Then you need to add the jar to extraClassPath then set `spark.gluten.loadLibFromJar=true`. Or you already manually deployed the dependency libraries on each worker node. You may find the libraries list from the gluten-package jar.
+With build option `enable_vcpkg=OFF`, not all dependency libraries will be statically linked. You need to separately execute `./dev/build-thirdparty.sh` to pack required
+shared libraries into another jar named `gluten-thirdparty-lib-$LINUX_OS-$VERSION-$ARCH.jar`. Then you need to add the jar to Spark config `extraClassPath` and set
+`spark.gluten.loadLibFromJar=true`. Otherwise, you need to install required shared libraries on each worker node. You may find the libraries list from the third-party jar.
 
 ## HDFS support
 
-Hadoop hdfs support is ready via the [libhdfs3](https://github.com/apache/hawq/tree/master/depends/libhdfs3) library. The libhdfs3 provides native API for Hadoop I/O without the drawbacks of JNI. It also provides advanced authentication like Kerberos based. Please note this library has several dependencies which may require extra installations on Driver and Worker node.
+Gluten supports dynamically loading both libhdfs.so and libhdfs3.so at runtime by using dlopen, allowing the JVM to load the appropriate shared library file as needed. This means you do not need to set the library path during the compilation phase.
+To enable this functionality, you must set the JAVA_HOME and HADOOP_HOME environment variables. Gluten will then locate and load the ${HADOOP_HOME}/lib/native/libhdfs.so file at runtime. If you prefer to use libhdfs3.so instead, simply replace the ${HADOOP_HOME}/lib/native/libhdfs.so file with libhdfs3.so.
 
 ### Build with HDFS support
 
@@ -129,7 +132,7 @@ cd /path/to/gluten
 ./dev/buildbundle-veloxbe.sh --enable_hdfs=ON
 ```
 
-### Configuration about HDFS support
+### Configuration about HDFS support in Libhdfs3
 
 HDFS uris (hdfs://host:port) will be extracted from a valid hdfs file path to initialize hdfs client, you do not need to specify it explicitly.
 
@@ -170,7 +173,7 @@ You also need to add configuration to the "hdfs-site.xml" as below:
 </property>
 ```
 
-### Kerberos support
+### Kerberos support in libhdfs3
 
 Here are two steps to enable kerberos.
 
@@ -214,17 +217,17 @@ cd /path/to/gluten
 ./dev/buildbundle-veloxbe.sh --enable_s3=ON
 ```
 
-Currently there are several ways to asscess S3 in Spark. Please refer [Velox S3](VeloxS3.md) part for more detailed configurations
+Currently there are several ways to access S3 in Spark. Please refer [Velox S3](VeloxS3.md) part for more detailed configurations
 
 ## Celeborn support
 
-Gluten with velox backend supports [Celeborn](https://github.com/apache/celeborn) as remote shuffle service. Currently, the supported Celeborn versions are `0.3.x` and `0.4.0`.
+Gluten with velox backend supports [Celeborn](https://github.com/apache/celeborn) as remote shuffle service. Currently, the supported Celeborn versions are `0.3.x`, `0.4.x` and `0.5.x`.
 
-Below introduction is used to enable this feature
+Below introduction is used to enable this feature.
 
 First refer to this URL(https://github.com/apache/celeborn) to setup a celeborn cluster.
 
-When compiling the Gluten Java module, it's required to enable `rss` profile, as follows:
+When compiling the Gluten Java module, it's required to enable `celeborn` profile, as follows:
 
 ```
 mvn clean package -Pbackends-velox -Pspark-3.3 -Pceleborn -DskipTests
@@ -233,7 +236,7 @@ mvn clean package -Pbackends-velox -Pspark-3.3 -Pceleborn -DskipTests
 Then add the Gluten and Spark Celeborn Client packages to your Spark application's classpath(usually add them into `$SPARK_HOME/jars`).
 
 - Celeborn: celeborn-client-spark-3-shaded_2.12-[celebornVersion].jar
-- Gluten: gluten-velox-bundle-spark3.x_2.12-xx_xx_xx-SNAPSHOT.jar, gluten-celeborn-package-xx-SNAPSHOT.jar
+- Gluten: gluten-velox-bundle-spark3.x_2.12-xx_xx_xx-SNAPSHOT.jar (The bundled Gluten Jar. Make sure -Pceleborn is specified when it is built.)
 
 Currently to use Gluten following configurations are required in `spark-defaults.conf`
 
@@ -267,6 +270,44 @@ spark.celeborn.storage.hdfs.dir hdfs://<namenode>/celeborn
 spark.dynamicAllocation.enabled false
 ```
 
+## Uniffle support
+
+Uniffle with velox backend supports [Uniffle](https://github.com/apache/incubator-uniffle) as remote shuffle service. Currently, the supported Uniffle versions are `0.9.1`.
+
+First refer to this URL(https://uniffle.apache.org/docs/intro) to get start with uniffle.
+
+When compiling the Gluten Java module, it's required to enable `uniffle` profile, as follows:
+
+```
+mvn clean package -Pbackends-velox -Pspark-3.3 -Puniffle -DskipTests
+```
+
+Then add the Uniffle and Spark Celeborn Client packages to your Spark application's classpath(usually add them into `$SPARK_HOME/jars`).
+
+- Uniffle: rss-client-spark3-shaded-[uniffleVersion].jar
+- Gluten: gluten-velox-bundle-spark3.x_2.12-xx_xx_xx-SNAPSHOT.jar (The bundled Gluten Jar. Make sure -Puniffle is specified when it is built.)
+
+Currently to use Gluten following configurations are required in `spark-defaults.conf`
+
+```
+spark.shuffle.manager org.apache.spark.shuffle.gluten.uniffle.UniffleShuffleManager
+
+# uniffle coordinator address
+spark.rss.coordinator.quorum ip:port
+
+# Support for Spark AQE
+spark.sql.adaptive.localShuffleReader.enabled false
+spark.shuffle.service.enabled false
+
+# Uniffle support mutilple storage types, you can choose one of them.
+# Such as MEMORY,LOCALFILE,MEMORY_LOCALFILE,HDFS,MEMORY_HDFS,LOCALFILE_HDFS,MEMORY_LOCALFILE_HDFS
+spark.rss.storage.type LOCALFILE_HDFS
+
+# If you want to use dynamic resource allocation,
+# please refer to this URL (https://uniffle.apache.org/docs/client-guide#support-spark-dynamic-allocation) for more details.
+spark.dynamicAllocation.enabled false
+```
+
 ## DeltaLake Support
 
 Gluten with velox backend supports [DeltaLake](https://delta.io/) table.
@@ -279,17 +320,14 @@ First of all, compile gluten-delta module by a `delta` profile, as follows:
 mvn clean package -Pbackends-velox -Pspark-3.3 -Pdelta -DskipTests
 ```
 
-Then, put the additional `gluten-delta-XX-SNAPSHOT.jar` to the class path (usually it's `$SPARK_HOME/jars`).
-The gluten-delta jar is in `gluten-delta/target` directory.
-
-After the two steps, you can query delta table by gluten/velox without scan's fallback.
+Once built successfully, delta features will be included in gluten-velox-bundle-X jar. Then you can query delta table by gluten/velox without scan's fallback.
 
 Gluten with velox backends also support the column mapping of delta tables.
 About column mapping, see more [here](https://docs.delta.io/latest/delta-column-mapping.html).
 
 ## Iceberg Support
 
-Gluten with velox backend supports [Iceberg](https://iceberg.apache.org/) table. Currently, only reading COW (Copy-On-Write) tables is supported.
+Gluten with velox backend supports [Iceberg](https://iceberg.apache.org/) table. Currently, both reading COW (Copy-On-Write) and MOR (Merge-On-Read) tables are supported.
 
 ### How to use
 
@@ -299,14 +337,25 @@ First of all, compile gluten-iceberg module by a `iceberg` profile, as follows:
 mvn clean package -Pbackends-velox -Pspark-3.3 -Piceberg -DskipTests
 ```
 
-Then, put the additional `gluten-iceberg-XX-SNAPSHOT.jar` to the class path (usually it's `$SPARK_HOME/jars`).
-The gluten-iceberg jar is in `gluten-iceberg/target` directory.
+Once built successfully, iceberg features will be included in gluten-velox-bundle-X jar. Then you can query iceberg table by gluten/velox without scan's fallback.
 
-After the two steps, you can query iceberg table by gluten/velox without scan's fallback.
+## Hudi Support
+
+Gluten with velox backend supports [Hudi](https://hudi.apache.org/) table. Currently, only reading COW (Copy-On-Write) tables is supported.
+
+### How to use
+
+First of all, compile gluten-hudi module by a `hudi` profile, as follows:
+
+```
+mvn clean package -Pbackends-velox -Pspark-3.3 -Phudi -DskipTests
+```
+
+Once built successfully, hudi features will be included in gluten-velox-bundle-X jar. Then you can query hudi **COW** table by gluten/velox without scan's fallback.
 
 # Coverage
 
-Spark3.3 has 387 functions in total. ~240 are commonly used. Velox's functions have two category, Presto and Spark. Presto has 124 functions implemented. Spark has 62 functions. Spark functions are verified to have the same result as Vanilla Spark. Some Presto functions have the same result as Vanilla Spark but some others have different. Gluten prefer to use Spark functions firstly. If it's not in Spark's list but implemented in Presto, we currently offload to Presto one until we noted some result mismatch, then we need to reimplement the function in Spark category. Gluten currently offloads 94 functions and 14 operators, more details refer to [Velox Backend's Supported Operators & Functions](../velox-backend-support-progress.md).
+Spark3.3 has 387 functions in total. ~240 are commonly used. To get the support status of all Spark built-in functions, please refer to [Velox Backend's Supported Operators & Functions](../velox-backend-support-progress.md).
 
 > Velox doesn't support [ANSI mode](https://spark.apache.org/docs/latest/sql-ref-ansi-compliance.html)), so as Gluten. Once ANSI mode is enabled in Spark config, Gluten will fallback to Vanilla Spark.
 
@@ -385,7 +434,7 @@ After the set-up, you can now build Gluten with HBM. Below command is used to en
 ```bash
 cd /path/to/gluten
 
-## The script builds four jars for spark 3.2.2, 3.3.1, 3.4.2 and 3.5.1.
+## The script builds four jars for spark 3.2.2, 3.3.1, 3.4.3 and 3.5.1.
 ./dev/buildbundle-veloxbe.sh --enable_hbm=ON
 ```
 
@@ -471,7 +520,7 @@ exit
 ```bash
 cd /path/to/gluten
 
-## The script builds four jars for spark 3.2.2, 3.3.1, 3.4.2 and 3.5.1.
+## The script builds four jars for spark 3.2.2, 3.3.1, 3.4.3 and 3.5.1.
 ./dev/buildbundle-veloxbe.sh --enable_qat=ON
 ```
 
@@ -567,7 +616,7 @@ After the set-up, you can now build Gluten with QAT. Below command is used to en
 ```bash
 cd /path/to/gluten
 
-## The script builds four jars for spark 3.2.2, 3.3.1, 3.4.2 and 3.5.1.
+## The script builds four jars for spark 3.2.2, 3.3.1, 3.4.3 and 3.5.1.
 ./dev/buildbundle-veloxbe.sh --enable_iaa=ON
 ```
 
@@ -619,8 +668,8 @@ All TPC-H and TPC-DS queries are supported in Gluten Velox backend.
 The data generation scripts are [TPC-H dategen script](../../tools/workload/tpch/gen_data/parquet_dataset/tpch_datagen_parquet.sh) and
 [TPC-DS dategen script](../../tools/workload/tpcds/gen_data/parquet_dataset/tpcds_datagen_parquet.sh).
 
-The used TPC-H and TPC-DS queries are the original ones, and can be accessed from [TPC-DS queries](../../gluten-core/src/test/resources/tpcds-queries/tpcds.queries.original)
-and [TPC-H queries](../../gluten-core/src/test/resources/tpch-queries).
+The used TPC-H and TPC-DS queries are the original ones, and can be accessed from [TPC-DS queries](../../tools/gluten-it/common/src/main/resources/tpcds-queries)
+and [TPC-H queries](../../tools/gluten-it/common/src/main/resources/tpch-queries).
 
 Some other versions of TPC-DS queries are also provided, but are **not** recommended for testing, including:
 
@@ -661,7 +710,7 @@ Refer to [Gluten configuration](../Configuration.md) for more details.
 
 ## Result
 
-*wholestagetransformer* indicates that the offload works.
+*wholestagetransformer* indicates that the offloading works.
 
 ![TPC-H Q6](../image/TPC-H_Q6_DAG.png)
 

@@ -18,20 +18,18 @@ package org.apache.spark.sql.execution
 
 import org.apache.gluten.backendsapi.BackendsApiManager
 import org.apache.gluten.columnarbatch.ColumnarBatches
-import org.apache.gluten.exception.GlutenException
-import org.apache.gluten.extension.GlutenPlan
-import org.apache.gluten.memory.arrowalloc.ArrowBufferAllocators
-import org.apache.gluten.sql.shims.SparkShimLoader
+import org.apache.gluten.execution.WriteFilesExecTransformer
+import org.apache.gluten.extension.ValidationResult
+import org.apache.gluten.memory.arrow.alloc.ArrowBufferAllocators
 
 import org.apache.spark.{Partition, SparkException, TaskContext, TaskOutputFileAlreadyExistException}
+import org.apache.spark.internal.io.{FileCommitProtocol, SparkHadoopWriterUtils}
 import org.apache.spark.internal.io.FileCommitProtocol.TaskCommitMessage
-import org.apache.spark.internal.io.SparkHadoopWriterUtils
 import org.apache.spark.rdd.RDD
 import org.apache.spark.shuffle.FetchFailedException
-import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.catalog.BucketSpec
 import org.apache.spark.sql.catalyst.catalog.CatalogTypes.TablePartitionSpec
-import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeSet, GenericInternalRow}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, GenericInternalRow}
 import org.apache.spark.sql.connector.write.WriterCommitMessage
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.internal.SQLConf
@@ -90,7 +88,8 @@ case class VeloxWriteFilesMetrics(
  */
 class VeloxColumnarWriteFilesRDD(
     var prev: RDD[ColumnarBatch],
-    writeFilesSpec: WriteFilesSpec,
+    description: WriteJobDescription,
+    committer: FileCommitProtocol,
     jobTrackerID: String)
   extends RDD[WriterCommitMessage](prev) {
 
@@ -98,7 +97,7 @@ class VeloxColumnarWriteFilesRDD(
     // Currently, the cb contains three columns: row, fragments, and context.
     // The first row in the row column contains the number of written numRows.
     // The fragments column contains detailed information about the file writes.
-    val loadedCb = ColumnarBatches.ensureLoaded(ArrowBufferAllocators.contextInstance, cb)
+    val loadedCb = ColumnarBatches.load(ArrowBufferAllocators.contextInstance, cb)
     assert(loadedCb.numCols() == 3)
     val numWrittenRows = loadedCb.column(0).getLong(0)
 
@@ -118,7 +117,7 @@ class VeloxColumnarWriteFilesRDD(
       val fileWriteInfo = fileWriteInfos.head
       numBytes += fileWriteInfo.fileSize
       val targetFileName = fileWriteInfo.targetFileName
-      val outputPath = writeFilesSpec.description.path
+      val outputPath = description.path
 
       // part1=1/part2=1
       val partitionFragment = metrics.name
@@ -126,7 +125,7 @@ class VeloxColumnarWriteFilesRDD(
       if (partitionFragment != "") {
         updatedPartitions += partitionFragment
         val tmpOutputPath = outputPath + "/" + partitionFragment + "/" + targetFileName
-        val customOutputPath = writeFilesSpec.description.customPartitionLocations.get(
+        val customOutputPath = description.customPartitionLocations.get(
           PartitioningUtils.parsePathFragment(partitionFragment))
         if (customOutputPath.isDefined) {
           addedAbsPathFiles(tmpOutputPath) = customOutputPath.get + "/" + targetFileName
@@ -174,8 +173,6 @@ class VeloxColumnarWriteFilesRDD(
 
   private def writeFilesForEmptyIterator(
       commitProtocol: SparkWriteFilesCommitProtocol): WriteTaskResult = {
-    val description = writeFilesSpec.description
-    val committer = writeFilesSpec.committer
     val taskAttemptContext = commitProtocol.taskAttemptContext
 
     val dataWriter =
@@ -194,10 +191,7 @@ class VeloxColumnarWriteFilesRDD(
   }
 
   override def compute(split: Partition, context: TaskContext): Iterator[WriterCommitMessage] = {
-    val commitProtocol = new SparkWriteFilesCommitProtocol(
-      jobTrackerID,
-      writeFilesSpec.description,
-      writeFilesSpec.committer)
+    val commitProtocol = new SparkWriteFilesCommitProtocol(jobTrackerID, description, committer)
 
     commitProtocol.setupTask()
     val writePath = commitProtocol.newTaskAttemptTempPath()
@@ -205,7 +199,7 @@ class VeloxColumnarWriteFilesRDD(
     var writeTaskResult: WriteTaskResult = null
     try {
       Utils.tryWithSafeFinallyAndFailureCallbacks(block = {
-        BackendsApiManager.getIteratorApiInstance.injectWriteFilesTempPath(writePath)
+        BackendsApiManager.getIteratorApiInstance.injectWriteFilesTempPath(writePath, "")
 
         // Initialize the native plan
         val iter = firstParent[ColumnarBatch].iterator(split, context)
@@ -238,7 +232,7 @@ class VeloxColumnarWriteFilesRDD(
       case t: Throwable =>
         throw new SparkException(
           s"Task failed while writing rows to staging path: $writePath, " +
-            s"output path: ${writeFilesSpec.description.path}",
+            s"output path: ${description.path}",
           t)
     }
 
@@ -255,56 +249,19 @@ class VeloxColumnarWriteFilesRDD(
   }
 }
 
-// The class inherits from "BinaryExecNode" instead of "UnaryExecNode" because
-// we need to expose a dummy child (as right child) with type "WriteFilesExec" to let Spark
-// choose the new write code path (version >= 3.4). The actual plan to write is the left child
-// of this operator.
-case class VeloxColumnarWriteFilesExec(
-    child: SparkPlan,
+case class VeloxColumnarWriteFilesExec private (
+    override val left: SparkPlan,
+    override val right: SparkPlan,
+    t: WriteFilesExecTransformer,
     fileFormat: FileFormat,
     partitionColumns: Seq[Attribute],
     bucketSpec: Option[BucketSpec],
     options: Map[String, String],
     staticPartitions: TablePartitionSpec)
-  extends BinaryExecNode
-  with GlutenPlan
-  with VeloxColumnarWriteFilesExec.ExecuteWriteCompatible {
-  import VeloxColumnarWriteFilesExec._
+  extends ColumnarWriteFilesExec(left, right) {
 
-  override lazy val references: AttributeSet = AttributeSet.empty
-
-  override def supportsColumnar(): Boolean = true
-
-  override def output: Seq[Attribute] = Seq.empty
-
-  override protected def doExecute(): RDD[InternalRow] = {
-    throw new GlutenException(s"$nodeName does not support doExecute")
-  }
-
-  /** Fallback to use vanilla Spark write files to generate an empty file for metadata only. */
-  private def writeFilesForEmptyRDD(
-      writeFilesSpec: WriteFilesSpec,
-      jobTrackerID: String): RDD[WriterCommitMessage] = {
-    val description = writeFilesSpec.description
-    val committer = writeFilesSpec.committer
-    val rddWithNonEmptyPartitions = session.sparkContext.parallelize(Seq.empty[InternalRow], 1)
-    rddWithNonEmptyPartitions.mapPartitionsInternal {
-      iterator =>
-        val sparkStageId = TaskContext.get().stageId()
-        val sparkPartitionId = TaskContext.get().partitionId()
-        val sparkAttemptNumber = TaskContext.get().taskAttemptId().toInt & Int.MaxValue
-
-        val ret = SparkShimLoader.getSparkShims.writeFilesExecuteTask(
-          description,
-          jobTrackerID,
-          sparkStageId,
-          sparkPartitionId,
-          sparkAttemptNumber,
-          committer,
-          iterator
-        )
-        Iterator(ret)
-    }
+  override protected def doValidateInternal(): ValidationResult = {
+    t.doValidateInternal()
   }
 
   override def doExecuteWrite(writeFilesSpec: WriteFilesSpec): RDD[WriterCommitMessage] = {
@@ -312,48 +269,19 @@ case class VeloxColumnarWriteFilesExec(
 
     val rdd = child.executeColumnar()
     val jobTrackerID = SparkHadoopWriterUtils.createJobTrackerID(new Date())
+    val description = writeFilesSpec.description
+    val committer = writeFilesSpec.committer
     if (rdd.partitions.length == 0) {
       // SPARK-23271 If we are attempting to write a zero partition rdd, create a dummy single
       // partition rdd to make sure we at least set up one write task to write the metadata.
-      writeFilesForEmptyRDD(writeFilesSpec, jobTrackerID)
+      writeFilesForEmptyRDD(description, committer, jobTrackerID)
     } else {
-      new VeloxColumnarWriteFilesRDD(rdd, writeFilesSpec, jobTrackerID)
+      new VeloxColumnarWriteFilesRDD(rdd, description, committer, jobTrackerID)
     }
   }
-
-  override def left: SparkPlan = child
-
-  // This is a workaround for FileFormatWriter#write. Vanilla Spark (version >= 3.4) requires for
-  // a plan that has at least one node exactly of type `WriteFilesExec` that is a Scala case-class,
-  // to decide to choose new `#executeWrite` code path over the legacy `#execute` for write
-  // operation.
-  //
-  // So we add a no-op `WriteFilesExec` child to let Spark pick the new code path.
-  //
-  // See: FileFormatWriter#write
-  // See: V1Writes#getWriteFilesOpt
-  override val right: SparkPlan =
-    WriteFilesExec(NoopLeaf(), fileFormat, partitionColumns, bucketSpec, options, staticPartitions)
 
   override protected def withNewChildrenInternal(
       newLeft: SparkPlan,
       newRight: SparkPlan): SparkPlan =
-    copy(newLeft, fileFormat, partitionColumns, bucketSpec, options, staticPartitions)
-}
-
-object VeloxColumnarWriteFilesExec {
-  private case class NoopLeaf() extends LeafExecNode {
-    override protected def doExecute(): RDD[InternalRow] =
-      throw new GlutenException(s"$nodeName does not support doExecute")
-    override def output: Seq[Attribute] = Seq.empty
-  }
-
-  sealed trait ExecuteWriteCompatible {
-    // To be compatible with Spark (version < 3.4)
-    protected def doExecuteWrite(writeFilesSpec: WriteFilesSpec): RDD[WriterCommitMessage] = {
-      throw new GlutenException(
-        s"Internal Error ${this.getClass} has write support" +
-          s" mismatch:\n${this}")
-    }
-  }
+    copy(newLeft, newRight, t, fileFormat, partitionColumns, bucketSpec, options, staticPartitions)
 }

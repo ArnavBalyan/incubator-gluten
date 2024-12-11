@@ -16,9 +16,7 @@
  */
 package org.apache.spark.shuffle.gluten.uniffle;
 
-import org.apache.spark.ShuffleDependency;
 import org.apache.spark.SparkConf;
-import org.apache.spark.SparkEnv;
 import org.apache.spark.TaskContext;
 import org.apache.spark.executor.ShuffleWriteMetrics;
 import org.apache.spark.shuffle.ColumnarShuffleDependency;
@@ -36,19 +34,10 @@ import org.slf4j.LoggerFactory;
 public class UniffleShuffleManager extends RssShuffleManager {
   private static final Logger LOG = LoggerFactory.getLogger(UniffleShuffleManager.class);
 
-  private boolean isDriver() {
-    return "driver".equals(SparkEnv.get().executorId());
-  }
-
   public UniffleShuffleManager(SparkConf conf, boolean isDriver) {
     super(conf, isDriver);
-    conf.set(RssSparkConfig.SPARK_RSS_CONFIG_PREFIX + RssSparkConfig.RSS_ROW_BASED.key(), "false");
-  }
-
-  @Override
-  public <K, V, C> ShuffleHandle registerShuffle(
-      int shuffleId, ShuffleDependency<K, V, C> dependency) {
-    return super.registerShuffle(shuffleId, dependency);
+    // FIXME: remove this after https://github.com/apache/incubator-uniffle/pull/2193
+    conf.set(RssSparkConfig.RSS_ENABLED.key(), "true");
   }
 
   @Override
@@ -59,14 +48,23 @@ public class UniffleShuffleManager extends RssShuffleManager {
     }
     RssShuffleHandle<K, V, V> rssHandle = (RssShuffleHandle<K, V, V>) handle;
     if (rssHandle.getDependency() instanceof ColumnarShuffleDependency) {
+      ColumnarShuffleDependency<K, V, V> dependency =
+          (ColumnarShuffleDependency<K, V, V>) rssHandle.getDependency();
       setPusherAppId(rssHandle);
-      String taskId = "" + context.taskAttemptId() + "_" + context.attemptNumber();
+      String taskId = context.taskAttemptId() + "_" + context.attemptNumber();
       ShuffleWriteMetrics writeMetrics;
       if (metrics != null) {
         writeMetrics = new WriteMetrics(metrics);
       } else {
         writeMetrics = context.taskMetrics().shuffleWriteMetrics();
       }
+      // set rss.row.based to false to mark it as columnar shuffle
+      SparkConf conf =
+          sparkConf
+              .clone()
+              .set(
+                  RssSparkConfig.SPARK_RSS_CONFIG_PREFIX + RssSparkConfig.RSS_ROW_BASED.key(),
+                  "false");
       return new VeloxUniffleColumnarShuffleWriter<>(
           context.partitionId(),
           rssHandle.getAppId(),
@@ -75,11 +73,12 @@ public class UniffleShuffleManager extends RssShuffleManager {
           context.taskAttemptId(),
           writeMetrics,
           this,
-          sparkConf,
+          conf,
           shuffleWriteClient,
           rssHandle,
           this::markFailedTask,
-          context);
+          context,
+          dependency.isSort());
     } else {
       return super.getWriter(handle, mapId, context, metrics);
     }

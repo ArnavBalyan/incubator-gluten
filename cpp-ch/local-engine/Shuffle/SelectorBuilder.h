@@ -46,11 +46,12 @@ struct PartitionInfo
 class SelectorBuilder
 {
 public:
-    explicit SelectorBuilder(bool use_external_sort_shuffle) : use_external_sort_shuffle(use_external_sort_shuffle) { }
+    explicit SelectorBuilder(bool use_external_sort_shuffle) : use_sort_shuffle(use_external_sort_shuffle) { }
     virtual ~SelectorBuilder() = default;
     virtual PartitionInfo build(DB::Block & block) = 0;
+    void setUseSortShuffle(bool use_external_sort_shuffle_) { use_sort_shuffle = use_external_sort_shuffle_; }
 protected:
-    bool use_external_sort_shuffle = false;
+    bool use_sort_shuffle = false;
 };
 
 class RoundRobinSelectorBuilder : public SelectorBuilder
@@ -117,7 +118,7 @@ private:
         const std::vector<size_t> & required_columns,
         size_t row,
         const DB::Columns & bound_columns,
-        size_t bound_row);
+        size_t bound_row) const;
 
     int binarySearchBound(
         const DB::Columns & bound_columns,

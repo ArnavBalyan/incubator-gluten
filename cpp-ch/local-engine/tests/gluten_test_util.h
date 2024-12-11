@@ -16,20 +16,32 @@
  */
 
 #pragma once
+#include "testConfig.h"
 
 #include <string>
+#include <Core/Block.h>
 #include <Core/ColumnsWithTypeAndName.h>
 #include <Core/NamesAndTypes.h>
-#include <DataTypes/DataTypeDate32.h>
-#include <DataTypes/DataTypeString.h>
-#include <DataTypes/DataTypesNumber.h>
+
 #include <Interpreters/ActionsDAG.h>
+#include <boost/algorithm/string/replace.hpp>
 #include <parquet/schema.h>
 
+namespace substrait
+{
+class Plan;
+}
+namespace local_engine
+{
+class LocalExecutor;
+}
 using BlockRowType = DB::ColumnsWithTypeAndName;
 using BlockFieldType = DB::ColumnWithTypeAndName;
 using AnotherRowType = DB::NamesAndTypesList;
 using AnotherFieldType = DB::NameAndTypePair;
+
+
+#define GLUTEN_DATA_DIR(file) "file://" SOURCE_DIR file
 
 namespace parquet
 {
@@ -58,56 +70,30 @@ DB::DataTypePtr toDataType(const parquet::ColumnDescriptor & type);
 
 AnotherRowType readParquetSchema(const std::string & file);
 
-DB::ActionsDAGPtr parseFilter(const std::string & filter, const AnotherRowType & name_and_types);
+std::optional<DB::ActionsDAG> parseFilter(const std::string & filter, const AnotherRowType & name_and_types);
+
+std::pair<substrait::Plan, std::unique_ptr<LocalExecutor>>
+create_plan_and_executor(std::string_view json_plan, std::string_view split, const std::optional<DB::ContextPtr> & context = std::nullopt);
+
+std::pair<substrait::Plan, std::unique_ptr<LocalExecutor>> create_plan_and_executor(
+    std::string_view json_plan,
+    std::string_view split_template,
+    std::string_view file,
+    const std::optional<DB::ContextPtr> & context = std::nullopt);
 
 }
 
-inline DB::DataTypePtr BIGINT()
+inline std::string replaceLocalFilesWildcards(const std::string_view haystack, const std::string_view replaced)
 {
-    return std::make_shared<DB::DataTypeInt64>();
-}
-inline DB::DataTypePtr INT()
-{
-    return std::make_shared<DB::DataTypeInt32>();
-}
-inline DB::DataTypePtr INT16()
-{
-    return std::make_shared<DB::DataTypeInt16>();
-}
-inline DB::DataTypePtr INT8()
-{
-    return std::make_shared<DB::DataTypeInt8>();
-}
-inline DB::DataTypePtr UBIGINT()
-{
-    return std::make_shared<DB::DataTypeUInt64>();
-}
-inline DB::DataTypePtr UINT()
-{
-    return std::make_shared<DB::DataTypeUInt32>();
-}
-inline DB::DataTypePtr UINT16()
-{
-    return std::make_shared<DB::DataTypeUInt16>();
-}
-inline DB::DataTypePtr UINT8()
-{
-    return std::make_shared<DB::DataTypeUInt8>();
+    static constexpr auto wildcard = "{replace_local_files}";
+    return boost::replace_all_copy(std::string{haystack}, wildcard, replaced);
 }
 
-inline DB::DataTypePtr DOUBLE()
+inline std::string replaceLocalFilesWithTPCH(const std::string_view haystack)
 {
-    return std::make_shared<DB::DataTypeFloat64>();
-}
-
-inline DB::DataTypePtr STRING()
-{
-    return std::make_shared<DB::DataTypeString>();
-}
-
-inline DB::DataTypePtr DATE()
-{
-    return std::make_shared<DB::DataTypeDate32>();
+    static constexpr auto wildcard = "{replace_GLUTEN_SOURCE_TPCH_DIR}";
+    constexpr std::string_view replaced = GLUTEN_SOURCE_TPCH_DIR("");
+    return boost::replace_all_copy(std::string{haystack}, wildcard, replaced);
 }
 
 inline BlockFieldType toBlockFieldType(const AnotherFieldType & type)
@@ -118,6 +104,17 @@ inline BlockFieldType toBlockFieldType(const AnotherFieldType & type)
 inline AnotherFieldType toAnotherFieldType(const parquet::ColumnDescriptor & type)
 {
     return {type.name(), local_engine::test::toDataType(type)};
+}
+
+inline AnotherRowType toAnotherRowType(const DB::Block & header)
+{
+    AnotherRowType types;
+    for (const auto & name : header.getNames())
+    {
+        const auto * column = header.findByName(name);
+        types.push_back(DB::NameAndTypePair(column->name, column->type));
+    }
+    return types;
 }
 
 inline BlockRowType toBlockRowType(const AnotherRowType & type, const bool reverse = false)
@@ -149,3 +146,9 @@ inline parquet::ByteArray ByteArrayFromString(const std::string & s)
     const auto * const ptr = reinterpret_cast<const uint8_t *>(s.data());
     return parquet::ByteArray(static_cast<uint32_t>(s.size()), ptr);
 }
+
+#define EMBEDDED_PLAN(res) \
+    std::string_view \
+    { \
+        reinterpret_cast<const char *>(g##res##Data), g##res##Size \
+    }

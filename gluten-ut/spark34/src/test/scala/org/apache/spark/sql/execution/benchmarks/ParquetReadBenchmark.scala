@@ -19,8 +19,9 @@ package org.apache.spark.sql.execution.benchmarks
 import org.apache.gluten.GlutenConfig
 import org.apache.gluten.backendsapi.BackendsApiManager
 import org.apache.gluten.execution.{FileSourceScanExecTransformer, WholeStageTransformer}
+import org.apache.gluten.extension.columnar.transition.Transitions
+import org.apache.gluten.jni.JniLibLoader
 import org.apache.gluten.utils.{BackendTestUtils, SystemParameters}
-import org.apache.gluten.vectorized.JniLibLoader
 
 import org.apache.spark.SparkConf
 import org.apache.spark.benchmark.Benchmark
@@ -125,7 +126,7 @@ object ParquetReadBenchmark extends SqlBasedBenchmark {
 
     // generate ColumnarToRow
     val columnarToRowPlan =
-      BackendsApiManager.getSparkPlanExecApiInstance.genColumnarToRowExec(newWholeStage)
+      Transitions.toBatchPlan(newWholeStage, BackendsApiManager.getSettings.primaryBatchType)
 
     val newWholeStageRDD = newWholeStage.executeColumnar()
     val newColumnarToRowRDD = columnarToRowPlan.execute()
@@ -166,7 +167,7 @@ object ParquetReadBenchmark extends SqlBasedBenchmark {
     }
 
     if (executedVanilla) {
-      spark.conf.set("spark.gluten.enabled", "false")
+      spark.conf.set(GlutenConfig.GLUTEN_ENABLED.key, "false")
 
       val vanillaParquet = spark.sql(s"""
                                         |select $scanSchema from parquet.`$parquetDir`

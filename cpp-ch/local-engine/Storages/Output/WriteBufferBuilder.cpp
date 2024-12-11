@@ -17,13 +17,11 @@
 #include <memory>
 #include <IO/WriteSettings.h>
 #include <Interpreters/Cache/FileCache.h>
-#include <Interpreters/Cache/FileCacheSettings.h>
 #include <Interpreters/Context_fwd.h>
-#include <Storages/HDFS/HDFSCommon.h>
-#include <Storages/HDFS/WriteBufferFromHDFS.h>
+#include <Storages/ObjectStorage/HDFS/HDFSCommon.h>
+#include <Storages/ObjectStorage/HDFS/WriteBufferFromHDFS.h>
 #include <Storages/Output/WriteBufferBuilder.h>
 #include <hdfs/hdfs.h>
-#include <Poco/Logger.h>
 #include <Poco/URI.h>
 #include <Common/CHUtil.h>
 
@@ -31,7 +29,7 @@ namespace DB
 {
 namespace ErrorCodes
 {
-    extern const int BAD_ARGUMENTS;
+extern const int BAD_ARGUMENTS;
 }
 }
 
@@ -41,7 +39,7 @@ namespace local_engine
 class LocalFileWriteBufferBuilder : public WriteBufferBuilder
 {
 public:
-    explicit LocalFileWriteBufferBuilder(DB::ContextPtr context_) : WriteBufferBuilder(context_) { }
+    explicit LocalFileWriteBufferBuilder(const DB::ContextPtr & context_) : WriteBufferBuilder(context_) { }
     ~LocalFileWriteBufferBuilder() override = default;
 
     std::unique_ptr<DB::WriteBuffer> build(const std::string & file_uri_) override
@@ -49,7 +47,7 @@ public:
         Poco::URI file_uri(file_uri_);
         const String & file_path = file_uri.getPath();
 
-        //mkdir
+        // mkdir
         std::filesystem::path p(file_path);
         if (!std::filesystem::exists(p.parent_path()))
             std::filesystem::create_directories(p.parent_path());
@@ -63,7 +61,7 @@ public:
 class HDFSFileWriteBufferBuilder : public WriteBufferBuilder
 {
 public:
-    explicit HDFSFileWriteBufferBuilder(DB::ContextPtr context_) : WriteBufferBuilder(context_) { }
+    explicit HDFSFileWriteBufferBuilder(const DB::ContextPtr & context_) : WriteBufferBuilder(context_) { }
     ~HDFSFileWriteBufferBuilder() override = default;
 
     std::unique_ptr<DB::WriteBuffer> build(const std::string & file_uri_) override
@@ -80,15 +78,19 @@ public:
 
         auto builder = DB::createHDFSBuilder(new_file_uri, context->getConfigRef());
         auto fs = DB::createHDFSFS(builder.get());
-        auto first = new_file_uri.find('/', new_file_uri.find("//") + 2);
-        auto last = new_file_uri.find_last_of('/');
-        auto dir = new_file_uri.substr(first, last - first);
-        int err = hdfsCreateDirectory(fs.get(), dir.c_str());
-        if (err)
+
+        auto begin_of_path = new_file_uri.find('/', new_file_uri.find("//") + 2);
+        auto url_without_path = new_file_uri.substr(0, begin_of_path);
+
+        // use uri.getPath() instead of new_file_uri.substr(begin_of_path) to avoid space character uri-encoded
+        std::filesystem::path file_path(uri.getPath());
+        auto dir = file_path.parent_path().string();
+
+        if (hdfsCreateDirectory(fs.get(), dir.c_str()))
             throw DB::Exception(DB::ErrorCodes::BAD_ARGUMENTS, "Cannot create dir for {} because {}", dir, std::string(hdfsGetLastError()));
 
         DB::WriteSettings write_settings;
-        return std::make_unique<DB::WriteBufferFromHDFS>(new_file_uri, context->getConfigRef(), 0, write_settings);
+        return std::make_unique<DB::WriteBufferFromHDFS>(url_without_path, file_path.string(), context->getConfigRef(), 0, write_settings);
     }
 };
 #endif
@@ -108,7 +110,7 @@ WriteBufferBuilderFactory & WriteBufferBuilderFactory::instance()
     return instance;
 }
 
-WriteBufferBuilderPtr WriteBufferBuilderFactory::createBuilder(const String & schema, DB::ContextPtr context)
+WriteBufferBuilderPtr WriteBufferBuilderFactory::createBuilder(const String & schema, const DB::ContextPtr & context)
 {
     auto it = builders.find(schema);
     if (it == builders.end())
@@ -116,7 +118,7 @@ WriteBufferBuilderPtr WriteBufferBuilderFactory::createBuilder(const String & sc
     return it->second(context);
 }
 
-void WriteBufferBuilderFactory::registerBuilder(const String & schema, NewBuilder newer)
+void WriteBufferBuilderFactory::registerBuilder(const String & schema, const NewBuilder & newer)
 {
     auto it = builders.find(schema);
     if (it != builders.end())

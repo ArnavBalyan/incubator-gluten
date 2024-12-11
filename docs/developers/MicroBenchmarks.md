@@ -15,7 +15,7 @@ comparing with directly debugging in a Spark job. Developers can use it to creat
 workloads, debug in native process, profile the hotspot and do optimizations.
 
 To simulate a first stage, you need to dump the Substrait plan and input split info into two JSON
-files. The input URIs of the splits should be exising file locations, which can be either local or
+files. The input URIs of the splits should be existing file locations, which can be either local or
 HDFS paths.
 
 To simulate a middle stage, in addition to the JSON file, you also need to save the input data of
@@ -64,7 +64,7 @@ cd /path/to/gluten/cpp/build/velox/benchmarks
 --plan /home/sparkuser/github/apache/incubator-gluten/backends-velox/generated-native-benchmark/example.json \
 --data /home/sparkuser/github/apache/incubator-gluten/backends-velox/generated-native-benchmark/example_orders/part-00000-1e66fb98-4dd6-47a6-8679-8625dbc437ee-c000.snappy.parquet,\
 /home/sparkuser/github/apache/incubator-gluten/backends-velox/generated-native-benchmark/example_lineitem/part-00000-3ec19189-d20e-4240-85ae-88631d46b612-c000.snappy.parquet \
---threads 1 --iterations 1 --noprint-result --benchmark_filter=InputFromBatchStream
+--threads 1 --iterations 1 --noprint-result
 ```
 
 The output should be like:
@@ -118,12 +118,12 @@ cd /path/to/gluten/
 First, get the Stage Id from spark UI for the stage you want to simulate.
 And then re-run the query with below configurations to dump the inputs to micro benchmark.
 
-| Parameters                                  | Description                                                                                                    | Recommend Setting     |
-|---------------------------------------------|----------------------------------------------------------------------------------------------------------------|-----------------------|
-| spark.gluten.sql.benchmark_task.stageId     | Spark task stage id                                                                                            | target stage id       |
-| spark.gluten.sql.benchmark_task.partitionId | Spark task partition id, default value -1 means all the partition of this stage                                | 0                     |
-| spark.gluten.sql.benchmark_task.taskId      | If not specify partition id, use spark task attempt id, default value -1 means all the partition of this stage | target task attemp id |
-| spark.gluten.saveDir                        | Directory to save the inputs to micro benchmark, should exist and be empty.                                    | /path/to/saveDir      |
+| Parameters                                  | Description                                                                                                                                                                                                                                                                                                                                 | Recommend Setting                                          |
+|---------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------|
+| spark.gluten.sql.benchmark_task.taskId      | Comma-separated string to specify the Task IDs to dump. If it's set, `spark.gluten.sql.benchmark_task.stageId` and `spark.gluten.sql.benchmark_task.partitionId` will be ignored.                                                                                                                                                           | Comma-separated string of task IDs. Empty by default.      |
+| spark.gluten.sql.benchmark_task.stageId     | Spark stage ID.                                                                                                                                                                                                                                                                                                                             | Target stage ID                                            |
+| spark.gluten.sql.benchmark_task.partitionId | Comma-separated string to specify the Partition IDs in a stage to dump. Must be specified together with `spark.gluten.sql.benchmark_task.stageId`. Empty by default, meaning all partitions of this stage will be dumped. To identify the partition ID, navigate to the `Stage` tab in the Spark UI and locate it under the `Index` column. | Comma-separated string of partition IDs. Empty by default. |
+| spark.gluten.saveDir                        | Directory to save the inputs to micro benchmark, should exist and be empty.                                                                                                                                                                                                                                                                 | /path/to/saveDir                                           |
 
 Check the files in `spark.gluten.saveDir`. If the simulated stage is a first stage, you will get 3
 or 4 types of dumped file:
@@ -250,6 +250,119 @@ cd /path/to/gluten/cpp/build/velox/benchmarks
 --threads 1 --noprint-result --with-shuffle
 ```
 
+Developers can leverage the `--with-shuffle` option to benchmark the shuffle-write process by creating
+a simple pipeline of `table scan + shuffle write` in Gluten. This can be done by dumping the micro benchmark
+inputs from a first stage. The steps are demonstrated as below:
+
+1. Start spark-shell or pyspark
+
+We need to set `spark.gluten.sql.benchmark_task.stageId` and `spark.gluten.saveDir` to dump the inputs.
+Normally, the stage id should be greater than 0. You can run the command in step 2 in advance to get the
+right stage id in your case. We shall set `spark.default.parallelism` to 1 and `spark.sql.files.maxPartitionBytes`
+large enough to make sure there will be only 1 task in the first stage.
+
+```
+# Start pyspark
+./bin/pyspark --master local[*] \
+--conf spark.gluten.sql.benchmark_task.stageId=1 \
+--conf spark.gluten.saveDir=/path/to/saveDir \
+--conf spark.default.parallelism=1 \
+--conf spark.sql.files.maxPartitionBytes=10g
+... # omit other spark & gluten config
+```
+
+2. Run the table-scan command to dump the plan for the first stage
+
+If simulating single or round-robin partitioning, the first stage can only have the table scan operator.
+
+```
+>>> spark.read.format("parquet").load("file:///example.parquet").show()
+```
+
+If simulating hash partitioning, there will be a projection for generating the hash partitioning key.
+Therefore we need to explicitly run the `repartition` to generate the `scan + project` pipeline for the first stage.
+Note that using different number of shuffle partitions here doesn't change the generated pipeline.
+
+```
+>>> spark.read.format("parquet").load("file:///example.parquet").repartition(10, "key1", "key2").show()
+```
+
+Simuating range partitioning is not supported.
+
+3. Run the micro benchmark with dumped inputs
+
+General configurations for shuffle write:
+
+- `--with-shuffle`: Add shuffle write process at the end of the pipeline
+- `--shuffle-writer`: Specify shuffle writer type. Valid options are sort and hash. Default is hash.
+- `--partitioning`: Specify partitioning type. Valid options are rr, hash and single. Defualt is rr.
+                    The partitioning type should match the command in step 2.
+- `--shuffle-partitions`: Specify number of shuffle partitions.
+- `--compression`: By default, the compression codec for shuffle outputs is lz4. You can switch to other compression codecs
+  or use hardware accelerators Valid options are: lz4, zstd, qat-gzip, qat-zstd and iaa-gzip. The compression levels are fixed (use default compression level 1).
+
+  Note using QAT or IAA codec requires Gluten cpp is built with these features.
+  Please check the corresponding section in [Velox document](../get-started/Velox.md) first for how to
+  setup, build and enable these features in Gluten. For QAT support, please
+  check [Intel® QuickAssist Technology (QAT) support](../get-started/Velox.md#intel-quickassist-technology-qat-support).
+  For IAA support, please
+  check [Intel® In-memory Analytics Accelerator (IAA/IAX) support](../get-started/Velox.md#intel-in-memory-analytics-accelerator-iaaiax-support)
+
+```shell
+cd /path/to/gluten/cpp/build/velox/benchmarks
+./generic_benchmark \
+--plan /path/to/saveDir/plan_1_0.json \
+--conf /path/to/saveDir/conf_1_0.ini \
+--split /path/to/saveDir/split_1_0_0.json \
+--with-shuffle \
+--shuffle-writer sort \
+--partitioning hash \
+--threads 1
+```
+
+### Run shuffle write/read task only
+
+Developers can only run shuffle write task via specifying `--run-shuffle` and `--data` options.
+The parquet format input will be read from arrow-parquet reader and sent to shuffle writer.
+The `--run-shuffle` option is similar to the `--with-shuffle` option, but it doesn't require the plan and split files.
+The round-robin partitioner is used by default. Besides, random partitioning can be used for testing purpose.
+By specifying option `--partitioning random`, the partitioner will generate a random partition id for each row.
+To evaluate the shuffle reader performance, developers can set `--run-shuffle-read` option to add read process after the write task finishes.
+
+The below command will run shuffle write/read in single thread, using sort shuffle writer with 40000 partitions and random partition id.
+
+```shell
+cd /path/to/gluten/cpp/build/velox/benchmarks
+./generic_benchmark \
+--run-shuffle \
+--run-shuffle-read \
+--data /path/to/input_for_shuffle_write.parquet
+--shuffle-writer sort \
+--partitioning random \
+--shuffle-partitions 40000 \
+--threads 1
+```
+
+The output should be like:
+
+```
+-------------------------------------------------------------------------------------------------------------------------
+Benchmark                                                               Time             CPU   Iterations UserCounters...
+-------------------------------------------------------------------------------------------------------------------------
+ShuffleWriteRead/iterations:1/process_time/real_time/threads:1 121637629714 ns   121309450910 ns            1 elapsed_time=121.638G read_input_time=25.2637G shuffle_compress_time=10.8311G shuffle_decompress_time=4.04055G shuffle_deserialize_time=7.24289G shuffle_spill_time=0 shuffle_split_time=69.9098G shuffle_write_time=2.03274G
+```
+
+## Enable debug mode
+
+`spark.gluten.sql.debug`(debug mode) is set to false by default thereby the google glog levels are limited to only print `WARNING` or higher severity logs.
+Unless `spark.gluten.sql.debug` is set in the INI file via `--conf`, the logging behavior is same as debug mode off.
+Developers can use `--debug-mode` command line flag to turn on debug mode when needed, and set verbosity/severity level via command line flags `--v` and `--minloglevel`. Note that constructing and deconstructing log strings can be very time-consuming, which may cause benchmark times to be inaccurate.
+
+
+## Enable HDFS support
+
+After enabling the dynamic loading of libhdfs.so at runtime to support HDFS, if you run the benchmark with an HDFS file, you need to set the classpath for Hadoop. You can do this by running `export CLASSPATH=`$HADOOP_HOME/bin/hdfs classpath --glob``. Otherwise, the HDFS connection will fail. If you have replaced ${HADOOP_HOME}/lib/native/libhdfs.so with libhdfs3.so, there is no need to set the `CLASSPATH`.
+
 ## Simulate write tasks
 
 The last operator for a write task is a file write operator, and the output from Velox pipeline only
@@ -265,27 +378,18 @@ cd /path/to/gluten/cpp/build/velox/benchmarks
 --write-path /absolute_path/<dir>
 ```
 
-By default, the compression codec for shuffle outputs is LZ4. You can switch to other codecs by
-adding one of the following argument flags to the command:
+## Simulate task spilling
 
-- --zstd: ZSTD codec, compression level 1
-- --qat-gzip: QAT GZIP codec, compression level 1
-- --qat-zstd: QAT ZSTD codec, compression level 1
-- --iaa-gzip: IAA GZIP codec, compression level 1
+You can simulate task spilling by specify a memory hard limit from `--memory_limit`. By default, spilled files are written to the `/tmp` directory.
+To simulate real Gluten workloads, which utilize multiple spill directories, set the environment variable GLUTEN_SPARK_LOCAL_DIRS to a comma-separated string.
+Please check [Simulate Gluten workload with multiple processes and threads](#Simulate-Gluten-workload-with-multiple-processes-and-threads) for more details.
 
-Note using QAT or IAA codec requires Gluten cpp is built with these features.
-Please check the corresponding section in [Velox document](../get-started/Velox.md) first for how to
-setup, build and enable these features in Gluten. For QAT support, please
-check [Intel® QuickAssist Technology (QAT) support](../get-started/Velox.md#intel-quickassist-technology-qat-support).
-For IAA support, please
-check [Intel® In-memory Analytics Accelerator (IAA/IAX) support](../get-started/Velox.md#intel-in-memory-analytics-accelerator-iaaiax-support)
-
-## Simulate Spark with multiple processes and threads
+## Simulate Gluten workload with multiple processes and threads
 
 You can use below command to launch several processes and threads to simulate parallel execution on
 Spark. Each thread in the same process will be pinned to the core number starting from `--cpu`.
 
-Suppose running on a baremetal machine with 48C, 2-socket, HT-on, launching below command will
+Suppose running on a bare-metal machine with 48C, 2-socket, HT-on, launching below command will
 utilize all vcores.
 
 ```shell
@@ -297,9 +401,10 @@ for ((i=0; i<${processes}; i++)); do
 done
 ```
 
-If you want to add the shuffle write process, you can specify multiple directories by setting
-environment variable `GLUTEN_SPARK_LOCAL_DIRS` to a comma-separated string for shuffle write to
-spread the I/O pressure to multiple disks.
+To include the shuffle write process or trigger spilling via `--memory-limit`,
+you can specify multiple directories by setting the `GLUTEN_SPARK_LOCAL_DIRS` environment variable
+to a comma-separated string. This will distribute the I/O load across multiple disks, similar to how it works for Gluten workloads.
+Temporary subdirectories will be created under each specified directory at runtime and will be automatically deleted if the process completes normally.
 
 ```shell
 mkdir -p {/data1,/data2,/data3}/tmp # Make sure each directory has been already created.

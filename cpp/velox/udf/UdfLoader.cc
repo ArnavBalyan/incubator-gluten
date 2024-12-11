@@ -25,9 +25,9 @@
 #include "Udaf.h"
 #include "Udf.h"
 #include "UdfLoader.h"
+#include "utils/Exception.h"
+#include "utils/Macros.h"
 #include "utils/StringUtil.h"
-#include "utils/exception.h"
-#include "utils/macros.h"
 
 namespace {
 
@@ -77,6 +77,9 @@ std::unordered_set<std::shared_ptr<UdfLoader::UdfSignature>> UdfLoader::getRegis
       int numUdf = getNumUdf();
       // allocate
       UdfEntry* udfEntries = static_cast<UdfEntry*>(malloc(sizeof(UdfEntry) * numUdf));
+      if (udfEntries == nullptr) {
+        throw gluten::GlutenException("malloc failed");
+      }
 
       void* getUdfEntriesSym = loadSymFromLibrary(handle, libPath, GLUTEN_TOSTRING(GLUTEN_GET_UDF_ENTRIES));
       auto getUdfEntries = reinterpret_cast<void (*)(UdfEntry*)>(getUdfEntriesSym);
@@ -86,11 +89,12 @@ std::unordered_set<std::shared_ptr<UdfLoader::UdfSignature>> UdfLoader::getRegis
         const auto& entry = udfEntries[i];
         auto dataType = toSubstraitTypeStr(entry.dataType);
         auto argTypes = toSubstraitTypeStr(entry.numArgs, entry.argTypes);
-        signatures_.insert(std::make_shared<UdfSignature>(entry.name, dataType, argTypes));
+        signatures_.insert(std::make_shared<UdfSignature>(
+            entry.name, dataType, argTypes, entry.variableArity, entry.allowTypeConversion));
       }
       free(udfEntries);
     } else {
-      LOG(INFO) << "No UDFs found in " << libPath;
+      LOG(INFO) << "No UDF found in " << libPath;
     }
 
     // Handle UDAFs.
@@ -100,6 +104,9 @@ std::unordered_set<std::shared_ptr<UdfLoader::UdfSignature>> UdfLoader::getRegis
       int numUdaf = getNumUdaf();
       // allocate
       UdafEntry* udafEntries = static_cast<UdafEntry*>(malloc(sizeof(UdafEntry) * numUdaf));
+      if (udafEntries == nullptr) {
+        throw gluten::GlutenException("malloc failed");
+      }
 
       void* getUdafEntriesSym = loadSymFromLibrary(handle, libPath, GLUTEN_TOSTRING(GLUTEN_GET_UDAF_ENTRIES));
       auto getUdafEntries = reinterpret_cast<void (*)(UdafEntry*)>(getUdafEntriesSym);
@@ -110,11 +117,12 @@ std::unordered_set<std::shared_ptr<UdfLoader::UdfSignature>> UdfLoader::getRegis
         auto dataType = toSubstraitTypeStr(entry.dataType);
         auto argTypes = toSubstraitTypeStr(entry.numArgs, entry.argTypes);
         auto intermediateType = toSubstraitTypeStr(entry.intermediateType);
-        signatures_.insert(std::make_shared<UdfSignature>(entry.name, dataType, argTypes, intermediateType));
+        signatures_.insert(std::make_shared<UdfSignature>(
+            entry.name, dataType, argTypes, intermediateType, entry.variableArity, entry.allowTypeConversion));
       }
       free(udafEntries);
     } else {
-      LOG(INFO) << "No UDAFs found in " << libPath;
+      LOG(INFO) << "No UDAF found in " << libPath;
     }
   }
   return signatures_;
@@ -149,6 +157,28 @@ void UdfLoader::registerUdf() {
 std::shared_ptr<UdfLoader> UdfLoader::getInstance() {
   static auto instance = std::make_shared<UdfLoader>();
   return instance;
+}
+
+std::string UdfLoader::toSubstraitTypeStr(const std::string& type) {
+  auto returnType = parser_.parse(type);
+  auto substraitType = convertor_.toSubstraitType(arena_, returnType);
+
+  std::string output;
+  substraitType.SerializeToString(&output);
+  return output;
+}
+
+std::string UdfLoader::toSubstraitTypeStr(int32_t numArgs, const char** args) {
+  std::vector<facebook::velox::TypePtr> argTypes;
+  argTypes.resize(numArgs);
+  for (auto i = 0; i < numArgs; ++i) {
+    argTypes[i] = parser_.parse(args[i]);
+  }
+  auto substraitType = convertor_.toSubstraitType(arena_, facebook::velox::ROW(std::move(argTypes)));
+
+  std::string output;
+  substraitType.SerializeToString(&output);
+  return output;
 }
 
 } // namespace gluten

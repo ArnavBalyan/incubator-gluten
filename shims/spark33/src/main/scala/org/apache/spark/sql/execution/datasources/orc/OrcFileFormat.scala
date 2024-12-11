@@ -16,8 +16,7 @@
  */
 package org.apache.spark.sql.execution.datasources.orc
 
-import org.apache.gluten.GlutenConfig
-import org.apache.gluten.execution.datasource.GlutenOrcWriterInjects
+import org.apache.gluten.execution.datasource.GlutenFormatFactory
 
 import org.apache.spark.TaskContext
 import org.apache.spark.sql.SparkSession
@@ -65,12 +64,7 @@ class OrcFileFormat extends FileFormat with DataSourceRegister with Serializable
       sparkSession: SparkSession,
       options: Map[String, String],
       files: Seq[FileStatus]): Option[StructType] = {
-    // Why if (false)? Such code requires comments when being written.
-    if ("true".equals(sparkSession.sparkContext.getLocalProperty("isNativeAppliable")) && false) {
-      GlutenOrcWriterInjects.getInstance().inferSchema(sparkSession, options, files)
-    } else { // the vanilla spark case
-      OrcUtils.inferSchema(sparkSession, files, options)
-    }
+    OrcUtils.inferSchema(sparkSession, files, options)
   }
 
   override def prepareWrite(
@@ -88,12 +82,10 @@ class OrcFileFormat extends FileFormat with DataSourceRegister with Serializable
       .asInstanceOf[JobConf]
       .setOutputFormat(classOf[org.apache.orc.mapred.OrcOutputFormat[OrcStruct]])
 
-    if ("true".equals(sparkSession.sparkContext.getLocalProperty("isNativeAppliable"))) {
+    if ("true" == sparkSession.sparkContext.getLocalProperty("isNativeApplicable")) {
       // pass compression to job conf so that the file extension can be aware of it.
       val nativeConf =
-        GlutenOrcWriterInjects
-          .getInstance()
-          .nativeConf(options, orcOptions.compressionCodec)
+        GlutenFormatFactory(shortName()).nativeConf(options, orcOptions.compressionCodec)
 
       new OutputWriterFactory {
         override def getFileExtension(context: TaskAttemptContext): String = {
@@ -109,10 +101,8 @@ class OrcFileFormat extends FileFormat with DataSourceRegister with Serializable
             path: String,
             dataSchema: StructType,
             context: TaskAttemptContext): OutputWriter = {
-          GlutenOrcWriterInjects
-            .getInstance()
-            .createOutputWriter(path, dataSchema, context, nativeConf);
-
+          GlutenFormatFactory(shortName())
+            .createOutputWriter(path, dataSchema, context, nativeConf)
         }
       }
     } else {
@@ -161,7 +151,7 @@ class OrcFileFormat extends FileFormat with DataSourceRegister with Serializable
       requiredSchema: StructType,
       filters: Seq[Filter],
       options: Map[String, String],
-      hadoopConf: Configuration): (PartitionedFile) => Iterator[InternalRow] = {
+      hadoopConf: Configuration): PartitionedFile => Iterator[InternalRow] = {
 
     val resultSchema = StructType(requiredSchema.fields ++ partitionSchema.fields)
     val sqlConf = sparkSession.sessionState.conf

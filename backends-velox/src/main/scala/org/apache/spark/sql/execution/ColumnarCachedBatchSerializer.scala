@@ -19,16 +19,15 @@ package org.apache.spark.sql.execution
 import org.apache.gluten.GlutenConfig
 import org.apache.gluten.backendsapi.BackendsApiManager
 import org.apache.gluten.columnarbatch.ColumnarBatches
-import org.apache.gluten.exec.Runtimes
 import org.apache.gluten.execution.{RowToVeloxColumnarExec, VeloxColumnarToRowExec}
-import org.apache.gluten.memory.arrowalloc.ArrowBufferAllocators
-import org.apache.gluten.memory.nmm.NativeMemoryManagers
-import org.apache.gluten.utils.{ArrowAbiUtil, Iterators}
+import org.apache.gluten.iterator.Iterators
+import org.apache.gluten.memory.arrow.alloc.ArrowBufferAllocators
+import org.apache.gluten.runtime.Runtimes
+import org.apache.gluten.utils.ArrowAbiUtil
 import org.apache.gluten.vectorized.ColumnarBatchSerializerJniWrapper
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.{InternalRow, SQLConfHelper}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.columnar.{CachedBatch, CachedBatchSerializer}
@@ -47,7 +46,7 @@ case class CachedColumnarBatch(
     bytes: Array[Byte])
   extends CachedBatch {}
 
-// spotless:off
+// format: off
 /**
  * Feature:
  * 1. This serializer supports column pruning
@@ -76,7 +75,7 @@ case class CachedColumnarBatch(
  *   - Deserializer DefaultCachedBatch -> InternalRow (unsupport ColumnarToRow)
  *     -> Convert DefaultCachedBatch to InternalRow using vanilla Spark serializer
  */
-// spotless:on
+// format: on
 class ColumnarCachedBatchSerializer extends CachedBatchSerializer with SQLConfHelper with Logging {
   private lazy val rowBasedCachedBatchSerializer = new DefaultCachedBatchSerializer
 
@@ -134,23 +133,9 @@ class ColumnarCachedBatchSerializer extends CachedBatchSerializer with SQLConfHe
         conf)
     }
 
-    // note, these metrics are unused but just make `RowToVeloxColumnarExec` happy
-    val metrics = BackendsApiManager.getMetricsApiInstance.genRowToColumnarMetrics(
-      SparkSession.getActiveSession.orNull.sparkContext)
-    val numInputRows = metrics("numInputRows")
-    val numOutputBatches = metrics("numOutputBatches")
-    val convertTime = metrics("convertTime")
     val numRows = conf.columnBatchSize
     val rddColumnarBatch = input.mapPartitions {
-      it =>
-        RowToVeloxColumnarExec.toColumnarBatchIterator(
-          it,
-          localSchema,
-          numInputRows,
-          numOutputBatches,
-          convertTime,
-          numRows
-        )
+      it => RowToVeloxColumnarExec.toColumnarBatchIterator(it, localSchema, numRows)
     }
     convertColumnarBatchToCachedBatch(rddColumnarBatch, schema, storageLevel, conf)
   }
@@ -170,23 +155,10 @@ class ColumnarCachedBatchSerializer extends CachedBatchSerializer with SQLConfHe
         conf)
     }
 
-    // note, these metrics are unused but just make `VeloxColumnarToRowExec` happy
-    val metrics = BackendsApiManager.getMetricsApiInstance.genColumnarToRowMetrics(
-      SparkSession.getActiveSession.orNull.sparkContext)
-    val numOutputRows = metrics("numOutputRows")
-    val numInputBatches = metrics("numInputBatches")
-    val convertTime = metrics("convertTime")
     val rddColumnarBatch =
       convertCachedBatchToColumnarBatch(input, cacheAttributes, selectedAttributes, conf)
     rddColumnarBatch.mapPartitions {
-      it =>
-        VeloxColumnarToRowExec.toRowIterator(
-          it,
-          selectedAttributes,
-          numOutputRows,
-          numInputBatches,
-          convertTime
-        )
+      it => VeloxColumnarToRowExec.toRowIterator(it, selectedAttributes)
     }
   }
 
@@ -197,10 +169,6 @@ class ColumnarCachedBatchSerializer extends CachedBatchSerializer with SQLConfHe
       conf: SQLConf): RDD[CachedBatch] = {
     input.mapPartitions {
       it =>
-        val nativeMemoryManagerHandle = NativeMemoryManagers
-          .contextInstance("ColumnarCachedBatchSerializer serialize")
-          .getNativeInstanceHandle
-
         new Iterator[CachedBatch] {
           override def hasNext: Boolean = it.hasNext
 
@@ -208,11 +176,12 @@ class ColumnarCachedBatchSerializer extends CachedBatchSerializer with SQLConfHe
             val batch = it.next()
             val results =
               ColumnarBatchSerializerJniWrapper
-                .create()
+                .create(
+                  Runtimes.contextInstance(
+                    BackendsApiManager.getBackendName,
+                    "ColumnarCachedBatchSerializer#serialize"))
                 .serialize(
-                  Array(ColumnarBatches.getNativeHandle(batch)),
-                  nativeMemoryManagerHandle
-                )
+                  Array(ColumnarBatches.getNativeHandle(BackendsApiManager.getBackendName, batch)))
             CachedColumnarBatch(
               results.getNumRows.toInt,
               results.getSerialized.length,
@@ -236,19 +205,17 @@ class ColumnarCachedBatchSerializer extends CachedBatchSerializer with SQLConfHe
     val timezoneId = SQLConf.get.sessionLocalTimeZone
     input.mapPartitions {
       it =>
+        val runtime = Runtimes.contextInstance(
+          BackendsApiManager.getBackendName,
+          "ColumnarCachedBatchSerializer#read")
         val jniWrapper = ColumnarBatchSerializerJniWrapper
-          .create()
-        val nmm = NativeMemoryManagers
-          .contextInstance("ColumnarCachedBatchSerializer read")
+          .create(runtime)
         val schema = SparkArrowUtil.toArrowSchema(localSchema, timezoneId)
         val arrowAlloc = ArrowBufferAllocators.contextInstance()
         val cSchema = ArrowSchema.allocateNew(arrowAlloc)
         ArrowAbiUtil.exportSchema(arrowAlloc, schema, cSchema)
         val deserializerHandle = jniWrapper
-          .init(
-            cSchema.memoryAddress(),
-            nmm.getNativeInstanceHandle
-          )
+          .init(cSchema.memoryAddress())
         cSchema.close()
 
         Iterators
@@ -260,10 +227,13 @@ class ColumnarCachedBatchSerializer extends CachedBatchSerializer with SQLConfHe
               val batchHandle =
                 jniWrapper
                   .deserialize(deserializerHandle, cachedBatch.bytes)
-              val batch = ColumnarBatches.create(Runtimes.contextInstance(), batchHandle)
+              val batch = ColumnarBatches.create(batchHandle)
               if (shouldSelectAttributes) {
                 try {
-                  ColumnarBatches.select(nmm, batch, requestedColumnIndices.toArray)
+                  ColumnarBatches.select(
+                    BackendsApiManager.getBackendName,
+                    batch,
+                    requestedColumnIndices.toArray)
                 } finally {
                   batch.close()
                 }
@@ -272,6 +242,7 @@ class ColumnarCachedBatchSerializer extends CachedBatchSerializer with SQLConfHe
               }
             }
           })
+          .protectInvocationFlow()
           .recycleIterator {
             jniWrapper.close(deserializerHandle)
           }

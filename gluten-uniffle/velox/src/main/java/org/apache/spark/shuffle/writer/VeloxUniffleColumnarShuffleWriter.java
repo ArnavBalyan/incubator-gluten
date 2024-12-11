@@ -17,13 +17,15 @@
 package org.apache.spark.shuffle.writer;
 
 import org.apache.gluten.GlutenConfig;
+import org.apache.gluten.backendsapi.BackendsApiManager;
 import org.apache.gluten.columnarbatch.ColumnarBatches;
 import org.apache.gluten.memory.memtarget.MemoryTarget;
 import org.apache.gluten.memory.memtarget.Spiller;
 import org.apache.gluten.memory.memtarget.Spillers;
-import org.apache.gluten.memory.nmm.NativeMemoryManagers;
+import org.apache.gluten.runtime.Runtime;
+import org.apache.gluten.runtime.Runtimes;
+import org.apache.gluten.vectorized.GlutenSplitResult;
 import org.apache.gluten.vectorized.ShuffleWriterJniWrapper;
-import org.apache.gluten.vectorized.SplitResult;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.TaskContext;
@@ -40,12 +42,12 @@ import org.apache.spark.sql.vectorized.ColumnarBatch;
 import org.apache.spark.util.SparkResourceUtil;
 import org.apache.uniffle.client.api.ShuffleWriteClient;
 import org.apache.uniffle.common.ShuffleBlockInfo;
+import org.apache.uniffle.common.exception.RssException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
@@ -61,17 +63,20 @@ public class VeloxUniffleColumnarShuffleWriter<K, V> extends RssShuffleWriter<K,
   private long nativeShuffleWriter = -1L;
 
   private boolean stopping = false;
-  private int compressThreshold = GlutenConfig.getConf().columnarShuffleCompressionThreshold();
-  private double reallocThreshold = GlutenConfig.getConf().columnarShuffleReallocThreshold();
+  private final int compressThreshold =
+      GlutenConfig.getConf().columnarShuffleCompressionThreshold();
+  private final double reallocThreshold = GlutenConfig.getConf().columnarShuffleReallocThreshold();
   private String compressionCodec;
   private int compressionLevel;
-  private int partitionId;
+  private int compressionBufferSize;
+  private final int partitionId;
 
-  private ShuffleWriterJniWrapper jniWrapper = ShuffleWriterJniWrapper.create();
-  private SplitResult splitResult;
-  private int nativeBufferSize = GlutenConfig.getConf().maxBatchSize();
-  private int bufferSize;
-  private PartitionPusher partitionPusher;
+  private final Runtime runtime =
+      Runtimes.contextInstance(BackendsApiManager.getBackendName(), "UniffleShuffleWriter");
+  private final ShuffleWriterJniWrapper jniWrapper = ShuffleWriterJniWrapper.create(runtime);
+  private final int nativeBufferSize = GlutenConfig.getConf().maxBatchSize();
+  private final int bufferSize;
+  private final Boolean isSort;
 
   private final ColumnarShuffleDependency<K, V, V> columnarDep;
   private final SparkConf sparkConf;
@@ -93,7 +98,8 @@ public class VeloxUniffleColumnarShuffleWriter<K, V> extends RssShuffleWriter<K,
       ShuffleWriteClient shuffleWriteClient,
       RssShuffleHandle<K, V, V> rssHandle,
       Function<String, Boolean> taskFailureCallback,
-      TaskContext context) {
+      TaskContext context,
+      Boolean isSort) {
     super(
         appId,
         shuffleId,
@@ -109,6 +115,7 @@ public class VeloxUniffleColumnarShuffleWriter<K, V> extends RssShuffleWriter<K,
     columnarDep = (ColumnarShuffleDependency<K, V, V>) rssHandle.getDependency();
     this.partitionId = partitionId;
     this.sparkConf = sparkConf;
+    this.isSort = isSort;
     bufferSize =
         (int)
             sparkConf.getSizeAsBytes(
@@ -116,98 +123,105 @@ public class VeloxUniffleColumnarShuffleWriter<K, V> extends RssShuffleWriter<K,
                 RssSparkConfig.RSS_WRITER_BUFFER_SIZE.defaultValue().get());
     if ((boolean) sparkConf.get(package$.MODULE$.SHUFFLE_COMPRESS())) {
       compressionCodec = GlutenShuffleUtils.getCompressionCodec(sparkConf);
+      compressionLevel =
+          GlutenShuffleUtils.getCompressionLevel(
+              sparkConf,
+              compressionCodec,
+              GlutenConfig.getConf().columnarShuffleCodecBackend().getOrElse(() -> null));
+      compressionBufferSize =
+          GlutenShuffleUtils.getCompressionBufferSize(sparkConf, compressionCodec);
     }
-    compressionLevel = GlutenShuffleUtils.getCompressionLevel(sparkConf, compressionCodec, null);
   }
 
   @Override
-  protected void writeImpl(Iterator<Product2<K, V>> records) throws IOException {
-    if (!records.hasNext() && !isMemoryShuffleEnabled) {
-      super.sendCommit();
+  protected void writeImpl(Iterator<Product2<K, V>> records) {
+    if (!records.hasNext()) {
+      sendCommit();
       return;
     }
     // writer already init
-    partitionPusher = new PartitionPusher(this);
+    PartitionPusher partitionPusher = new PartitionPusher(this);
     while (records.hasNext()) {
       ColumnarBatch cb = (ColumnarBatch) (records.next()._2());
       if (cb.numRows() == 0 || cb.numCols() == 0) {
         LOG.info("Skip ColumnarBatch of 0 rows or 0 cols");
       } else {
-        long handle = ColumnarBatches.getNativeHandle(cb);
+        long handle = ColumnarBatches.getNativeHandle(BackendsApiManager.getBackendName(), cb);
         if (nativeShuffleWriter == -1) {
           nativeShuffleWriter =
               jniWrapper.makeForRSS(
-                  columnarDep.nativePartitioning(),
+                  columnarDep.nativePartitioning().getShortName(),
+                  columnarDep.nativePartitioning().getNumPartitions(),
                   nativeBufferSize,
                   // use field do this
                   compressionCodec,
                   compressionLevel,
+                  compressionBufferSize,
                   compressThreshold,
                   GlutenConfig.getConf().columnarShuffleCompressionMode(),
+                  (int) (long) sparkConf.get(package$.MODULE$.SHUFFLE_SORT_INIT_BUFFER_SIZE()),
+                  (boolean) sparkConf.get(package$.MODULE$.SHUFFLE_SORT_USE_RADIXSORT()),
+                  bufferSize,
                   bufferSize,
                   partitionPusher,
-                  NativeMemoryManagers.create(
-                          "UniffleShuffleWriter",
-                          new Spiller() {
-                            @Override
-                            public long spill(MemoryTarget self, long size) {
-                              if (nativeShuffleWriter == -1) {
-                                throw new IllegalStateException(
-                                    "Fatal: spill() called before a shuffle shuffle writer "
-                                        + "evaluator is created. This behavior should be"
-                                        + "optimized by moving memory "
-                                        + "allocations from make() to split()");
-                              }
-                              LOG.info(
-                                  "Gluten shuffle writer: Trying to push {} bytes of data", size);
-                              long pushed =
-                                  jniWrapper.nativeEvict(nativeShuffleWriter, size, false);
-                              LOG.info(
-                                  "Gluten shuffle writer: Pushed {} / {} bytes of data",
-                                  pushed,
-                                  size);
-                              return pushed;
-                            }
-
-                            @Override
-                            public Set<Phase> applicablePhases() {
-                              return Spillers.PHASE_SET_SPILL_ONLY;
-                            }
-                          })
-                      .getNativeInstanceHandle(),
                   handle,
                   taskAttemptId,
                   GlutenShuffleUtils.getStartPartitionId(
                       columnarDep.nativePartitioning(), partitionId),
                   "uniffle",
+                  isSort
+                      ? GlutenConfig.GLUTEN_SORT_SHUFFLE_WRITER()
+                      : GlutenConfig.GLUTEN_HASH_SHUFFLE_WRITER(),
                   reallocThreshold);
+          runtime
+              .memoryManager()
+              .addSpiller(
+                  new Spiller() {
+                    @Override
+                    public long spill(MemoryTarget self, Spiller.Phase phase, long size) {
+                      if (!Spillers.PHASE_SET_SPILL_ONLY.contains(phase)) {
+                        return 0L;
+                      }
+                      LOG.info("Gluten shuffle writer: Trying to push {} bytes of data", size);
+                      long pushed = jniWrapper.nativeEvict(nativeShuffleWriter, size, false);
+                      LOG.info("Gluten shuffle writer: Pushed {} / {} bytes of data", pushed, size);
+                      return pushed;
+                    }
+                  });
         }
         long startTime = System.nanoTime();
         long bytes =
-            jniWrapper.split(nativeShuffleWriter, cb.numRows(), handle, availableOffHeapPerTask());
-        LOG.debug("jniWrapper.split rows {}, split bytes {}", cb.numRows(), bytes);
+            jniWrapper.write(nativeShuffleWriter, cb.numRows(), handle, availableOffHeapPerTask());
+        LOG.debug("jniWrapper.write rows {}, split bytes {}", cb.numRows(), bytes);
         columnarDep.metrics().get("dataSize").get().add(bytes);
         // this metric replace part of uniffle shuffle write time
-        columnarDep.metrics().get("splitTime").get().add(System.nanoTime() - startTime);
+        columnarDep.metrics().get("shuffleWallTime").get().add(System.nanoTime() - startTime);
         columnarDep.metrics().get("numInputRows").get().add(cb.numRows());
         columnarDep.metrics().get("inputBatches").get().add(1);
         shuffleWriteMetrics.incRecordsWritten(cb.numRows());
       }
     }
 
-    long startTime = System.nanoTime();
     LOG.info("nativeShuffleWriter value {}", nativeShuffleWriter);
+    // If all of the ColumnarBatch have empty rows, the nativeShuffleWriter still equals -1
     if (nativeShuffleWriter == -1L) {
-      throw new IllegalStateException("nativeShuffleWriter should not be -1L");
+      sendCommit();
+      return;
     }
-    splitResult = jniWrapper.stop(nativeShuffleWriter);
+    long startTime = System.nanoTime();
+    GlutenSplitResult splitResult;
+    try {
+      splitResult = jniWrapper.stop(nativeShuffleWriter);
+    } catch (IOException e) {
+      throw new RssException(e);
+    }
+    columnarDep.metrics().get("shuffleWallTime").get().add(System.nanoTime() - startTime);
     columnarDep
         .metrics()
         .get("splitTime")
         .get()
         .add(
-            System.nanoTime()
-                - startTime
+            columnarDep.metrics().get("shuffleWallTime").get().value()
                 - splitResult.getTotalPushTime()
                 - splitResult.getTotalWriteTime()
                 - splitResult.getTotalCompressTime());
@@ -220,14 +234,19 @@ public class VeloxUniffleColumnarShuffleWriter<K, V> extends RssShuffleWriter<K,
     long pushMergedDataTime = System.nanoTime();
     // clear all
     sendRestBlockAndWait();
+    sendCommit();
+    long writeDurationNanos = System.nanoTime() - pushMergedDataTime;
+    shuffleWriteMetrics.incWriteTime(writeDurationNanos);
+    LOG.info(
+        "Finish write shuffle with rest write {} ms",
+        TimeUnit.NANOSECONDS.toMillis(writeDurationNanos));
+  }
+
+  @Override
+  protected void sendCommit() {
     if (!isMemoryShuffleEnabled) {
       super.sendCommit();
     }
-    long writeDurationMs = System.nanoTime() - pushMergedDataTime;
-    shuffleWriteMetrics.incWriteTime(writeDurationMs);
-    LOG.info(
-        "Finish write shuffle  with rest write {} ms",
-        TimeUnit.MILLISECONDS.toNanos(writeDurationMs));
   }
 
   @Override
@@ -237,7 +256,7 @@ public class VeloxUniffleColumnarShuffleWriter<K, V> extends RssShuffleWriter<K,
       closeShuffleWriter();
       return super.stop(success);
     }
-    return Option.empty();
+    return Option.<MapStatus>empty();
   }
 
   private void closeShuffleWriter() {

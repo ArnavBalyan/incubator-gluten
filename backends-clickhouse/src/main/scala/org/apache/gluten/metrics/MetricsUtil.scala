@@ -38,10 +38,13 @@ object MetricsUtil extends Logging {
           j.metricsUpdater(),
           // must put the buildPlan first
           Seq(treeifyMetricsUpdaters(j.buildPlan), treeifyMetricsUpdaters(j.streamedPlan)))
+      case t: TransformSupport if t.metricsUpdater() == MetricsUpdater.None =>
+        assert(t.children.size == 1, "MetricsUpdater.None can only be used on unary operator")
+        treeifyMetricsUpdaters(t.children.head)
       case t: TransformSupport =>
         MetricsUpdaterTree(t.metricsUpdater(), t.children.map(treeifyMetricsUpdaters))
       case _ =>
-        MetricsUpdaterTree(NoopMetricsUpdater, Seq())
+        MetricsUpdaterTree(MetricsUpdater.Terminate, Seq())
     }
   }
 
@@ -107,7 +110,7 @@ object MetricsUtil extends Logging {
             s"Updating native metrics failed due to the wrong size of metrics data: " +
               s"$numNativeMetrics")
           ()
-        } else if (mutNode.updater == NoopMetricsUpdater) {
+        } else if (mutNode.updater == MetricsUpdater.Terminate) {
           ()
         } else {
           updateTransformerMetricsInternal(
@@ -159,7 +162,7 @@ object MetricsUtil extends Logging {
 
     mutNode.children.foreach {
       child =>
-        if (child.updater != NoopMetricsUpdater) {
+        if (child.updater != MetricsUpdater.Terminate) {
           val result = updateTransformerMetricsInternal(
             child,
             relMap,
@@ -177,10 +180,12 @@ object MetricsUtil extends Logging {
 
   /** Get all processors */
   def getAllProcessorList(metricData: MetricsData): Seq[MetricsProcessor] = {
-    metricData.steps.asScala.flatMap(
-      step => {
-        step.processors.asScala
-      })
+    metricData.steps.asScala
+      .flatMap(
+        step => {
+          step.processors.asScala
+        })
+      .toSeq
   }
 
   /** Update extra time metric by the processors */

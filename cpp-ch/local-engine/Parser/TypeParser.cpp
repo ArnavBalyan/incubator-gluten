@@ -14,30 +14,30 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <optional>
 #include <AggregateFunctions/AggregateFunctionFactory.h>
 #include <Core/ColumnsWithTypeAndName.h>
 #include <DataTypes/DataTypeAggregateFunction.h>
 #include <DataTypes/DataTypeArray.h>
 #include <DataTypes/DataTypeDate32.h>
-#include <DataTypes/DataTypeDateTime.h>
 #include <DataTypes/DataTypeDateTime64.h>
 #include <DataTypes/DataTypeFactory.h>
 #include <DataTypes/DataTypeFixedString.h>
 #include <DataTypes/DataTypeMap.h>
 #include <DataTypes/DataTypeNothing.h>
 #include <DataTypes/DataTypeNullable.h>
-#include <DataTypes/DataTypeSet.h>
 #include <DataTypes/DataTypeString.h>
 #include <DataTypes/DataTypeTuple.h>
 #include <DataTypes/DataTypesDecimal.h>
 #include <DataTypes/DataTypesNumber.h>
 #include <Parser/AggregateFunctionParser.h>
 #include <Parser/FunctionParser.h>
+#include <Parser/ParserContext.h>
+#include <Parser/RelParsers/RelParser.h>
 #include <Parser/SerializedPlanParser.h>
 #include <Parser/TypeParser.h>
 #include <Poco/StringTokenizer.h>
 #include <Common/Exception.h>
+#include <Common/QueryContext.h>
 
 namespace DB
 {
@@ -59,7 +59,8 @@ std::unordered_map<String, String> TypeParser::type_names_mapping
        {"FloatType", "Float32"},
        {"DoubleType", "Float64"},
        {"StringType", "String"},
-       {"DateType", "Date32"}};
+       {"DateType", "Date32"},
+       {"TimestampType", "DateTime64"}};
 
 String TypeParser::getCHTypeName(const String & spark_type_name)
 {
@@ -191,9 +192,9 @@ DB::DataTypePtr TypeParser::parseType(const substrait::Type & substrait_type, st
                 struct_field_types[i] = parseType(types[i]);
 
             const auto & names = substrait_type.struct_().names();
-            for (int i = 0; i < names.size(); ++i)
-                if (!names[i].empty())
-                    struct_field_names.push_back(names[i]);
+            for (const auto & name : names)
+                if (!name.empty())
+                    struct_field_names.push_back(name);
         }
 
         if (!struct_field_names.empty())
@@ -238,9 +239,7 @@ DB::DataTypePtr TypeParser::parseType(const substrait::Type & substrait_type, st
 }
 
 
-DB::Block TypeParser::buildBlockFromNamedStruct(
-    const substrait::NamedStruct & struct_,
-    const std::string & low_card_cols)
+DB::Block TypeParser::buildBlockFromNamedStruct(const substrait::NamedStruct & struct_, const std::string & low_card_cols)
 {
     std::unordered_set<std::string> low_card_columns;
     Poco::StringTokenizer tokenizer(low_card_cols, ",");
@@ -260,9 +259,7 @@ DB::Block TypeParser::buildBlockFromNamedStruct(
         auto ch_type = parseType(substrait_type, &field_names);
 
         if (low_card_columns.contains(name))
-        {
             ch_type = std::make_shared<DB::DataTypeLowCardinality>(ch_type);
-        }
 
         // This is a partial aggregate data column.
         // It's type is special, must be a struct type contains all arguments types.
@@ -277,16 +274,15 @@ DB::Block TypeParser::buildBlockFromNamedStruct(
 
             auto args_types = tuple_type->getElements();
             AggregateFunctionProperties properties;
-            auto tmp_ctx = DB::Context::createCopy(SerializedPlanParser::global_context);
-            SerializedPlanParser tmp_plan_parser(tmp_ctx);
-            auto function_parser = AggregateFunctionParserFactory::instance().get(name_parts[3], &tmp_plan_parser);
+            auto tmp_ctx = DB::Context::createCopy(QueryContext::globalContext());
+            auto parser_context = ParserContext::build(tmp_ctx);
+            auto function_parser = AggregateFunctionParserFactory::instance().get(name_parts[3], parser_context);
             /// This may remove elements from args_types, because some of them are used to determine CH function name, but not needed for the following
             /// call `AggregateFunctionFactory::instance().get`
             auto agg_function_name = function_parser->getCHFunctionName(args_types);
-            auto action = NullsAction::EMPTY;
-            ch_type = AggregateFunctionFactory::instance()
-                      .get(agg_function_name, action, args_types, function_parser->getDefaultFunctionParameters(), properties)
-                      ->getStateType();
+            ch_type = RelParser::getAggregateFunction(
+                          agg_function_name, args_types, properties, function_parser->getDefaultFunctionParameters())
+                          ->getStateType();
         }
 
         internal_cols.push_back(ColumnWithTypeAndName(ch_type, name));

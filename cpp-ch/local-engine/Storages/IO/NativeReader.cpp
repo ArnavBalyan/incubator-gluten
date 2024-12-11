@@ -54,6 +54,7 @@ DB::Block NativeReader::read()
     DB::Block result_block;
     if (istr.eof())
         return result_block;
+
     if (columns_parse_util.empty())
     {
         result_block = prepareByFirstBlock();
@@ -128,7 +129,7 @@ static void readNormalSimpleData(DB::ReadBuffer &in, DB::ColumnPtr & column, siz
 
     ISerialization::DeserializeBinaryBulkStatePtr state;
 
-    column_parse_util.serializer->deserializeBinaryBulkStatePrefix(settings, state);
+    column_parse_util.serializer->deserializeBinaryBulkStatePrefix(settings, state, nullptr);
     column_parse_util.serializer->deserializeBinaryBulkWithMultipleStreams(column, rows, settings, state, nullptr);
 }
 
@@ -145,7 +146,7 @@ readNormalComplexData(DB::ReadBuffer & in, DB::ColumnPtr & column, size_t rows, 
     ISerialization::DeserializeBinaryBulkStatePtr state;
 
     DB::ColumnPtr new_col = column->cloneResized(0);
-    column_parse_util.serializer->deserializeBinaryBulkStatePrefix(settings, state);
+    column_parse_util.serializer->deserializeBinaryBulkStatePrefix(settings, state ,nullptr);
     column_parse_util.serializer->deserializeBinaryBulkWithMultipleStreams(new_col, rows, settings, state, nullptr);
     column->assumeMutable()->insertRangeFrom(*new_col, 0, new_col->size());
 }
@@ -154,6 +155,7 @@ DB::Block NativeReader::prepareByFirstBlock()
 {
     if (istr.eof())
         return {};
+
     const DataTypeFactory & data_type_factory = DataTypeFactory::instance();
     DB::Block result_block;
 
@@ -246,10 +248,12 @@ bool NativeReader::appendNextBlock(DB::Block & result_block)
 {
     if (istr.eof())
         return false;
+
     size_t columns = 0;
     size_t rows = 0;
     readVarUInt(columns, istr);
     readVarUInt(rows, istr);
+
     for (size_t i = 0; i < columns; ++i)
     {
         // Not actually read type name.
@@ -259,6 +263,7 @@ bool NativeReader::appendNextBlock(DB::Block & result_block)
 
         if (!rows) [[unlikely]]
             continue;
+
         auto & column_parse_util = columns_parse_util[i];
         auto & column = result_block.getByPosition(i);
         column_parse_util.parse(istr, column.column, rows, column_parse_util);

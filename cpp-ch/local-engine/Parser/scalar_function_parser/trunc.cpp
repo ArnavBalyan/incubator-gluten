@@ -36,7 +36,7 @@ namespace local_engine
 class FunctionParserTrunc : public FunctionParser
 {
 public:
-    explicit FunctionParserTrunc(SerializedPlanParser * plan_parser_) : FunctionParser(plan_parser_) {}
+    explicit FunctionParserTrunc(ParserContextPtr parser_context_) : FunctionParser(parser_context_) {}
     ~FunctionParserTrunc() override = default;
 
     static constexpr auto name = "trunc";
@@ -45,9 +45,9 @@ public:
 
     const ActionsDAG::Node * parse(
         const substrait::Expression_ScalarFunction & substrait_func,
-        ActionsDAGPtr & actions_dag) const override
+        ActionsDAG & actions_dag) const override
     {
-        auto parsed_args = parseFunctionArguments(substrait_func, "", actions_dag);
+        auto parsed_args = parseFunctionArguments(substrait_func, actions_dag);
         if (parsed_args.size() != 2)
             throw Exception(ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH, "Function {} requires two arguments", getName());
 

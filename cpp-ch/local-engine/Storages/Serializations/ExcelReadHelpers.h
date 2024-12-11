@@ -19,10 +19,10 @@
 #include <Formats/FormatSettings.h>
 #include <IO/ReadBuffer.h>
 #include <IO/ReadHelpers.h>
-#include <IO/parseDateTimeBestEffort.h>
+
 
 #include <Common/LocalDate.h>
-#include <Common/StringUtils/StringUtils.h>
+#include <Common/StringUtils.h>
 
 #include "ExcelNumberReader.h"
 
@@ -98,7 +98,7 @@ bool readDateTime64Text(
     const DateLUTImpl & utc_time_zone,
     bool quote);
 
-bool readDateTextWithExcel(LocalDate & date, DB::ReadBuffer & buf, bool is_us_style);
+bool readDateTextWithExcel(LocalDate & date, DB::ReadBuffer & buf, bool is_us_style, const DB::FormatSettings & settings);
 bool readDateText(LocalDate & date, DB::ReadBuffer & buf, const DB::FormatSettings & settings);
 
 

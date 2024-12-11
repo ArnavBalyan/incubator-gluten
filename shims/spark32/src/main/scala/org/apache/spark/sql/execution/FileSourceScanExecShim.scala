@@ -18,8 +18,9 @@ package org.apache.spark.sql.execution
 
 import org.apache.gluten.metrics.GlutenTimeMetric
 
-import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.expressions.{And, Attribute, AttributeReference, BoundReference, DynamicPruningExpression, Expression, PlanExpression, Predicate}
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
+import org.apache.spark.sql.catalyst.expressions.{And, Attribute, AttributeReference, BoundReference, Expression, PlanExpression, Predicate}
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, PartitionDirectory}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.types.StructType
@@ -57,10 +58,7 @@ abstract class FileSourceScanExecShim(
 
   def metadataColumns: Seq[AttributeReference] = Seq.empty
 
-  def hasUnsupportedColumns: Boolean = {
-    // Below name has special meaning in Velox.
-    output.exists(a => a.name == "$path" || a.name == "$bucket")
-  }
+  def hasUnsupportedColumns: Boolean = false
 
   def isMetadataColumn(attr: Attribute): Boolean = false
 
@@ -153,4 +151,19 @@ abstract class FileSourceScanExecShim(
     sendDriverMetrics()
     selected
   }
+}
+
+abstract class ArrowFileSourceScanLikeShim(original: FileSourceScanExec)
+  extends DataSourceScanExec {
+  override val nodeNamePrefix: String = "ArrowFile"
+
+  override lazy val metrics = original.metrics
+
+  override def tableIdentifier: Option[TableIdentifier] = original.tableIdentifier
+
+  override def inputRDDs(): Seq[RDD[InternalRow]] = original.inputRDDs()
+
+  override def relation: HadoopFsRelation = original.relation
+
+  override protected def metadata: Map[String, String] = original.metadata
 }

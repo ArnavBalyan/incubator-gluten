@@ -28,10 +28,19 @@ Gluten CPP coding, there are a few Philosophical rules as the following.
 ## Code Formatting
 
 Many aspects of C++ coding style will be covered by clang-format, such as spacing,
-line width, indentation and ordering (for includes, using directives and etc). 
+line width, indentation and ordering (for includes, using directives and etc).
 
-* Always ensure your code is compatible with clang-format-12 for Velox backend.
+* Always ensure your code is compatible with clang-format-15 for Velox backend.
 * `dev/formatcppcode.sh` is provided for formatting Velox CPP code.
+
+To format cmake files like CMakeLists.txt & *.cmake, `cmake-format` is required to
+be installed. Here is an example.
+
+```
+apt install python3-pip -y
+pip3 install --user cmake-format
+cmake-format --first-comment-is-literal True --in-place cpp/velox/CMakeLists.txt
+```
 
 ## Naming Conventions
 
@@ -64,7 +73,7 @@ line width, indentation and ordering (for includes, using directives and etc). 
 	* Obvious exception: files used for defining various misc functions.
 * If a header file has a corresponding source file, they should have the same file
 	name with different suffix, such as `a.h vs a.cc`.
-* If a function is declared in the file `a.h`, ensure it's defined in the corrosponding
+* If a function is declared in the file `a.h`, ensure it's defined in the corresponding
 	source file `a.cc`, do not define it in other files.
 * No deep source directory for CPP files, not do it as JAVA.
 * Include header files should satisfy the following rules.
@@ -86,7 +95,7 @@ line width, indentation and ordering (for includes, using directives and etc). 
 	* Ensure that public inheritance represent the relation of `is-a`.
 	* Ensure that private inheritance represent the relation of `implements-with`.
 * Don't make a function `virtual` without reason.
-* Ensure the polymorphic base class has a `virtual` deconstructor.
+* Ensure the polymorphic base class has a `virtual` destructor.
 * Use `override` to make overriding explicit and to make the compiler work.
 * Use `const` to mark the member function read-only as far as possible.
 * When you try to define a `copy constructor` or a `operator=` for a class, remember
@@ -104,8 +113,8 @@ line width, indentation and ordering (for includes, using directives and etc). 
 		the function name. such as. use `get(size_t index)` instead of `getByIndex`.
 * A function should focus on a single logic operation.
 * A function should do as the name meaning.
-	* do everything converd by the function name
-	* don't do anything not convered by the function name
+	* do everything covered by the function name
+	* don't do anything not covered by the function name
 
 ## Variable
 
@@ -149,7 +158,7 @@ line width, indentation and ordering (for includes, using directives and etc). 
 	* `unique_ptr` represents ownership, but not share ownership. `unique_ptr` is
 		equivalent to RAII, release the resource when the object is destructed.
 	* `shared_ptr` represents shared ownership by use-count. It is more expensive 
-		that `unqiue_ptr`.
+		that `unique_ptr`.
 	* `weak_ptr` models temporary ownership. It is useful in breaking reference cycles 
 		formed by objects managed by `shared_ptr`.
 * Use `unique_ptr` or `shared_ptr` to represent ownership.

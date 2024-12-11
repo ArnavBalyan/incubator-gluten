@@ -32,7 +32,7 @@ namespace local_engine
 class FunctionParserCot : public FunctionParser
 {
 public:
-    explicit FunctionParserCot(SerializedPlanParser * plan_parser_) : FunctionParser(plan_parser_) { }
+    explicit FunctionParserCot(ParserContextPtr parser_context_) : FunctionParser(parser_context_) { }
     ~FunctionParserCot() override = default;
 
     static constexpr auto name = "cot";
@@ -41,10 +41,10 @@ public:
 
     const ActionsDAG::Node * parse(
         const substrait::Expression_ScalarFunction & substrait_func,
-        ActionsDAGPtr & actions_dag) const override
+        ActionsDAG & actions_dag) const override
     {
         /// parse cot(x) as 1 / tan(x)
-        auto parsed_args = parseFunctionArguments(substrait_func, "", actions_dag);
+        auto parsed_args = parseFunctionArguments(substrait_func, actions_dag);
         if (parsed_args.size() != 1)
             throw Exception(ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH, "Function {} requires exactly one arguments", getName());
 

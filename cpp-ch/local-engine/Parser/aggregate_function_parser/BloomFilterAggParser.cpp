@@ -20,7 +20,6 @@
 #include <Parser/AggregateFunctionParser.h>
 #include <Parser/aggregate_function_parser/BloomFilterAggParser.h>
 #include <Poco/StringTokenizer.h>
-#include <Common/CHUtil.h>
 #include "substrait/algebra.pb.h"
 
 namespace DB
@@ -53,7 +52,7 @@ DB::Array get_parameters(Int64 insert_num, Int64 bits_num)
 }
 
 DB::Array AggregateFunctionParserBloomFilterAgg::parseFunctionParameters(
-    const CommonFunctionInfo & func_info, DB::ActionsDAG::NodeRawConstPtrs & arg_nodes) const
+    const CommonFunctionInfo & func_info, DB::ActionsDAG::NodeRawConstPtrs & arg_nodes, DB::ActionsDAG & /*actions_dag*/) const
 {
     if (func_info.phase == substrait::AGGREGATION_PHASE_INITIAL_TO_INTERMEDIATE || func_info.phase == substrait::AGGREGATION_PHASE_INITIAL_TO_RESULT)
     {
@@ -63,8 +62,8 @@ DB::Array AggregateFunctionParserBloomFilterAgg::parseFunctionParameters(
             node->column->get(0, ret);
             return ret;
         };
-        Int64 insert_num = get_parameter_field(arg_nodes[1], 1).get<Int64>();
-        Int64 bits_num = get_parameter_field(arg_nodes[2], 2).get<Int64>();
+        Int64 insert_num = get_parameter_field(arg_nodes[1], 1).safeGet<Int64>();
+        Int64 bits_num = get_parameter_field(arg_nodes[2], 2).safeGet<Int64>();
 
         // Delete all args except the first arg.
         arg_nodes.resize(1);

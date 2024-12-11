@@ -26,29 +26,32 @@ import org.apache.spark.shuffle.ShuffleHandle
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.catalog.BucketSpec
+import org.apache.spark.sql.catalyst.csv.CSVOptions
 import org.apache.spark.sql.catalyst.expressions.{Attribute, BinaryExpression, Expression}
-import org.apache.spark.sql.catalyst.expressions.aggregate.{ImperativeAggregate, TypedImperativeAggregate}
+import org.apache.spark.sql.catalyst.expressions.aggregate.TypedImperativeAggregate
+import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.catalyst.plans.physical.Distribution
-import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.apache.spark.sql.catalyst.plans.physical.{Distribution, Partitioning}
 import org.apache.spark.sql.catalyst.rules.Rule
-import org.apache.spark.sql.catalyst.trees.TernaryLike
 import org.apache.spark.sql.connector.catalog.Table
 import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.connector.read.{InputPartition, Scan}
-import org.apache.spark.sql.execution.{FileSourceScanExec, FilterExec, GlobalLimitExec, SparkPlan, TakeOrderedAndProjectExec}
-import org.apache.spark.sql.execution.aggregate.ObjectHashAggregateExec
-import org.apache.spark.sql.execution.datasources.{FilePartition, FileScanRDD, PartitionDirectory, PartitionedFile, PartitioningAwareFileIndex, WriteJobDescription, WriteTaskResult}
+import org.apache.spark.sql.execution.{FileSourceScanExec, GlobalLimitExec, SparkPlan, TakeOrderedAndProjectExec}
+import org.apache.spark.sql.execution.command.DataWritingCommandExec
+import org.apache.spark.sql.execution.datasources._
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFilters
 import org.apache.spark.sql.execution.datasources.v2.BatchScanExec
 import org.apache.spark.sql.execution.datasources.v2.text.TextScan
 import org.apache.spark.sql.execution.exchange.{BroadcastExchangeLike, ShuffleExchangeLike}
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.{DecimalType, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.storage.{BlockId, BlockManagerId}
 
 import org.apache.hadoop.fs.{FileStatus, Path}
+import org.apache.parquet.schema.MessageType
 
-import java.util.{ArrayList => JArrayList, Map => JMap}
+import java.util.{Map => JMap, Properties}
 
 import scala.reflect.ClassTag
 
@@ -154,7 +157,7 @@ trait SparkShims {
 
   def enableNativeWriteFilesByDefault(): Boolean = false
 
-  def createTestTaskContext(): TaskContext
+  def createTestTaskContext(properties: Properties): TaskContext
 
   def broadcastInternal[T: ClassTag](sc: SparkContext, value: T): Broadcast[T] = {
     // Since Spark 3.4, the `sc.broadcast` has been optimized to use `sc.broadcastInternal`.
@@ -177,8 +180,7 @@ trait SparkShims {
       startMapIndex: Int,
       endMapIndex: Int,
       startPartition: Int,
-      endPartition: Int)
-      : Tuple2[Iterator[(BlockManagerId, collection.Seq[(BlockId, Long, Int)])], Boolean]
+      endPartition: Int): Tuple2[Iterator[(BlockManagerId, Seq[(BlockId, Long, Int)])], Boolean]
 
   // Compatible with Spark-3.5 and later
   def getShuffleAdvisoryPartitionSize(shuffle: ShuffleExchangeLike): Option[Long] = None
@@ -191,6 +193,12 @@ trait SparkShims {
 
   def getFileStatus(partition: PartitionDirectory): Seq[FileStatus]
 
+  def isFileSplittable(relation: HadoopFsRelation, filePath: Path, sparkSchema: StructType): Boolean
+
+  def isRowIndexMetadataColumn(name: String): Boolean
+
+  def findRowIndexColumnIndexInSchema(sparkSchema: StructType): Int
+
   def splitFiles(
       sparkSession: SparkSession,
       file: FileStatus,
@@ -202,6 +210,9 @@ trait SparkShims {
   def structFromAttributes(attrs: Seq[Attribute]): StructType
 
   def attributesFromStruct(structType: StructType): Seq[Attribute]
+
+  // Spark 3.3 and later only have file size and modification time in PartitionedFile
+  def getFileSizeAndModificationTime(file: PartitionedFile): (Option[Long], Option[Long])
 
   def generateMetadataColumns(
       file: PartitionedFile,
@@ -229,4 +240,49 @@ trait SparkShims {
 
   def withAnsiEvalMode(expr: Expression): Boolean = false
 
+  def dateTimestampFormatInReadIsDefaultValue(csvOptions: CSVOptions, timeZone: String): Boolean
+
+  def isPlannedV1Write(write: DataWritingCommandExec): Boolean = false
+
+  def createParquetFilters(
+      conf: SQLConf,
+      schema: MessageType,
+      caseSensitive: Option[Boolean] = None): ParquetFilters
+
+  def genDecimalRoundExpressionOutput(decimalType: DecimalType, toScale: Int): DecimalType = {
+    val p = decimalType.precision
+    val s = decimalType.scale
+    // After rounding we may need one more digit in the integral part,
+    // e.g. `ceil(9.9, 0)` -> `10`, `ceil(99, -1)` -> `100`.
+    val integralLeastNumDigits = p - s + 1
+    if (toScale < 0) {
+      // negative scale means we need to adjust `-scale` number of digits before the decimal
+      // point, which means we need at lease `-scale + 1` digits (after rounding).
+      val newPrecision = math.max(integralLeastNumDigits, -toScale + 1)
+      // We have to accept the risk of overflow as we can't exceed the max precision.
+      DecimalType(math.min(newPrecision, DecimalType.MAX_PRECISION), 0)
+    } else {
+      val newScale = math.min(s, toScale)
+      // We have to accept the risk of overflow as we can't exceed the max precision.
+      DecimalType(math.min(integralLeastNumDigits + newScale, 38), newScale)
+    }
+  }
+
+  def extractExpressionArrayInsert(arrayInsert: Expression): Seq[Expression] = {
+    throw new UnsupportedOperationException("ArrayInsert not supported.")
+  }
+
+  /** Shim method for usages from GlutenExplainUtils.scala. */
+  def withOperatorIdMap[T](idMap: java.util.Map[QueryPlan[_], Int])(body: => T): T = {
+    body
+  }
+
+  /** Shim method for usages from GlutenExplainUtils.scala. */
+  def getOperatorId(plan: QueryPlan[_]): Option[Int]
+
+  /** Shim method for usages from GlutenExplainUtils.scala. */
+  def setOperatorId(plan: QueryPlan[_], opId: Int): Unit
+
+  /** Shim method for usages from GlutenExplainUtils.scala. */
+  def unsetOperatorId(plan: QueryPlan[_]): Unit
 }

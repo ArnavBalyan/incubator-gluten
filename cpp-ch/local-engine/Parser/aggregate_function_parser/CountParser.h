@@ -23,13 +23,13 @@ namespace local_engine
 class CountParser : public AggregateFunctionParser
 {
 public:
-    explicit CountParser(SerializedPlanParser * plan_parser_) : AggregateFunctionParser(plan_parser_) { }
+    explicit CountParser(ParserContextPtr parser_context_) : AggregateFunctionParser(parser_context_) { }
     ~CountParser() override = default;
     static constexpr auto name = "count";
     String getName() const override { return name; }
     String getCHFunctionName(const CommonFunctionInfo &) const override;
     String getCHFunctionName(DB::DataTypes &) const override;
     DB::ActionsDAG::NodeRawConstPtrs parseFunctionArguments(
-        const CommonFunctionInfo & func_info, const String & ch_func_name, DB::ActionsDAGPtr & actions_dag) const override;
+        const CommonFunctionInfo & func_info, DB::ActionsDAG & actions_dag) const override;
 };
 }

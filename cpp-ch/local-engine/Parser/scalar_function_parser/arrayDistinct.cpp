@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 #include <Parser/FunctionParser.h>
-#include <Common/CHUtil.h>
+
 #include <Core/Field.h>
 #include <DataTypes/IDataType.h>
 
@@ -34,7 +34,7 @@ namespace local_engine
 class FunctionParserArrayDistinct : public FunctionParser
 {
 public:
-    explicit FunctionParserArrayDistinct(SerializedPlanParser * plan_parser_) : FunctionParser(plan_parser_) { }
+    explicit FunctionParserArrayDistinct(ParserContextPtr parser_context_) : FunctionParser(parser_context_) { }
 
     static constexpr auto name = "array_distinct";
 
@@ -42,9 +42,9 @@ public:
 
     const ActionsDAG::Node * parse(
         const substrait::Expression_ScalarFunction & substrait_func,
-        ActionsDAGPtr & actions_dag) const override
+        ActionsDAG & actions_dag) const override
     {
-        auto parsed_args = parseFunctionArguments(substrait_func, "", actions_dag);
+        auto parsed_args = parseFunctionArguments(substrait_func, actions_dag);
         if (parsed_args.size() != 1)
             throw Exception(ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH, "Function {} requires exactly one arguments", getName());
 

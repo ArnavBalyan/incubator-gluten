@@ -16,6 +16,7 @@
  */
 #include "JSONFormatFile.h"
 
+
 #include <Formats/FormatFactory.h>
 #include <Formats/FormatSettings.h>
 #include <Processors/Formats/Impl/JSONEachRowRowInputFormat.h>
@@ -30,7 +31,7 @@ JSONFormatFile::JSONFormatFile(DB::ContextPtr context_, const substrait::ReadRel
 FormatFile::InputFormatPtr JSONFormatFile::createInputFormat(const DB::Block & header)
 {
     auto res = std::make_shared<FormatFile::InputFormat>();
-    res->read_buffer = read_buffer_builder->buildWithCompressionWrapper(file_info, true);
+    res->read_buffer = read_buffer_builder->buildWithCompressionWrapper(file_info);
 
     DB::FormatSettings format_settings = DB::getFormatSettings(context);
     format_settings.with_names_use_header = true;

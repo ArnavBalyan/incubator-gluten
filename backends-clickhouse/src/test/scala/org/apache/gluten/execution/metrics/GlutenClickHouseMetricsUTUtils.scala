@@ -16,11 +16,10 @@
  */
 package org.apache.gluten.execution.metrics
 
-import org.apache.gluten.execution.WholeStageTransformer
-import org.apache.gluten.memory.alloc.CHNativeMemoryAllocators
+import org.apache.gluten.execution.{ColumnarNativeIterator, WholeStageTransformer}
 import org.apache.gluten.metrics.{MetricsUtil, NativeMetrics}
 import org.apache.gluten.utils.SubstraitPlanPrinterUtil
-import org.apache.gluten.vectorized.{CHNativeExpressionEvaluator, GeneralInIterator, GeneralOutIterator}
+import org.apache.gluten.vectorized.CHNativeExpressionEvaluator
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -36,7 +35,7 @@ object GlutenClickHouseMetricsUTUtils {
   def executeSubstraitPlan(
       substraitPlanPath: String,
       basePath: String,
-      inBatchIters: java.util.ArrayList[GeneralInIterator],
+      inBatchIters: java.util.ArrayList[ColumnarNativeIterator],
       outputAttributes: java.util.ArrayList[Attribute]): Seq[NativeMetrics] = {
     val nativeMetricsList = new ListBuffer[NativeMetrics]
 
@@ -45,10 +44,7 @@ object GlutenClickHouseMetricsUTUtils {
       SubstraitPlanPrinterUtil.jsonToSubstraitPlan(
         substraitPlanJsonStr.replaceAll("basePath", basePath.substring(1)))
 
-    val transKernel = new CHNativeExpressionEvaluator()
-    val mockMemoryAllocator = CHNativeMemoryAllocators.contextInstanceForUT()
-    val resIter: GeneralOutIterator = transKernel.createKernelWithBatchIterator(
-      mockMemoryAllocator.getNativeInstanceId,
+    val resIter = CHNativeExpressionEvaluator.createKernelWithBatchIterator(
       substraitPlan.toByteArray,
       new Array[Array[Byte]](0),
       inBatchIters)
@@ -76,7 +72,6 @@ object GlutenClickHouseMetricsUTUtils {
 
     iter.foreach(_.toString)
     resIter.close()
-    mockMemoryAllocator.close()
 
     nativeMetricsList.toSeq
   }

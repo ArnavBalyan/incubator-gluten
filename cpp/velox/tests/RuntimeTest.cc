@@ -18,19 +18,43 @@
 #include "compute/VeloxRuntime.h"
 
 #include <gtest/gtest.h>
+#include "compute/VeloxBackend.h"
 
 namespace gluten {
 
+class DummyMemoryManager final : public MemoryManager {
+ public:
+  DummyMemoryManager(const std::string& kind) : MemoryManager(kind){};
+
+  arrow::MemoryPool* getArrowMemoryPool() override {
+    throw GlutenException("Not yet implemented");
+  }
+  const MemoryUsageStats collectMemoryUsageStats() const override {
+    throw GlutenException("Not yet implemented");
+  }
+  const int64_t shrink(int64_t size) override {
+    throw GlutenException("Not yet implemented");
+  }
+  void hold() override {
+    throw GlutenException("Not yet implemented");
+  }
+};
+
+inline static const std::string kDummyBackendKind{"dummy"};
+
 class DummyRuntime final : public Runtime {
  public:
-  DummyRuntime(const std::unordered_map<std::string, std::string>& conf) : Runtime(conf) {}
+  DummyRuntime(
+      const std::string& kind,
+      DummyMemoryManager* mm,
+      const std::unordered_map<std::string, std::string>& conf)
+      : Runtime(kind, mm, conf) {}
 
   void parsePlan(const uint8_t* data, int32_t size, std::optional<std::string> dumpFile) override {}
 
   void parseSplitInfo(const uint8_t* data, int32_t size, std::optional<std::string> dumpFile) override {}
 
   std::shared_ptr<ResultIterator> createResultIterator(
-      MemoryManager* memoryManager,
       const std::string& spillDir,
       const std::vector<std::shared_ptr<ResultIterator>>& inputs,
       const std::unordered_map<std::string, std::string>& sessionConf) override {
@@ -38,60 +62,40 @@ class DummyRuntime final : public Runtime {
     auto iter = std::make_shared<ResultIterator>(std::move(resIter));
     return iter;
   }
-  MemoryManager* createMemoryManager(
-      const std::string& name,
-      std::shared_ptr<MemoryAllocator> ptr,
-      std::unique_ptr<AllocationListener> uniquePtr) override {
+  MemoryManager* memoryManager() override {
     throw GlutenException("Not yet implemented");
   }
   std::shared_ptr<ColumnarBatch> createOrGetEmptySchemaBatch(int32_t numRows) override {
     throw GlutenException("Not yet implemented");
   }
-  std::shared_ptr<ColumnarToRowConverter> createColumnar2RowConverter(MemoryManager* memoryManager) override {
+  std::shared_ptr<ColumnarToRowConverter> createColumnar2RowConverter(int64_t column2RowMemThreshold) override {
     throw GlutenException("Not yet implemented");
   }
-  std::shared_ptr<RowToColumnarConverter> createRow2ColumnarConverter(
-      MemoryManager* memoryManager,
-      struct ArrowSchema* cSchema) override {
+  std::shared_ptr<RowToColumnarConverter> createRow2ColumnarConverter(struct ArrowSchema* cSchema) override {
     throw GlutenException("Not yet implemented");
   }
   std::shared_ptr<ShuffleWriter> createShuffleWriter(
       int numPartitions,
       std::unique_ptr<PartitionWriter> partitionWriter,
-      ShuffleWriterOptions,
-      MemoryManager* memoryManager) override {
+      ShuffleWriterOptions) override {
     throw GlutenException("Not yet implemented");
   }
   Metrics* getMetrics(ColumnarBatchIterator* rawIter, int64_t exportNanos) override {
     static Metrics m(1);
     return &m;
   }
-  std::shared_ptr<Datasource> createDatasource(
-      const std::string& filePath,
-      MemoryManager* memoryManager,
-      std::shared_ptr<arrow::Schema> schema) override {
-    throw GlutenException("Not yet implemented");
-  }
   std::shared_ptr<ShuffleReader> createShuffleReader(
       std::shared_ptr<arrow::Schema> schema,
-      ShuffleReaderOptions options,
-      arrow::MemoryPool* pool,
-      MemoryManager* memoryManager) override {
+      ShuffleReaderOptions options) override {
     throw GlutenException("Not yet implemented");
   }
-  std::unique_ptr<ColumnarBatchSerializer> createColumnarBatchSerializer(
-      MemoryManager* memoryManager,
-      arrow::MemoryPool* arrowPool,
-      struct ArrowSchema* cSchema) override {
+  std::unique_ptr<ColumnarBatchSerializer> createColumnarBatchSerializer(struct ArrowSchema* cSchema) override {
     throw GlutenException("Not yet implemented");
   }
-  std::shared_ptr<ColumnarBatch> select(MemoryManager*, std::shared_ptr<ColumnarBatch>, std::vector<int32_t>) override {
+  std::shared_ptr<ColumnarBatch> select(std::shared_ptr<ColumnarBatch>, const std::vector<int32_t>&) override {
     throw GlutenException("Not yet implemented");
   }
   std::string planString(bool details, const std::unordered_map<std::string, std::string>& sessionConf) override {
-    throw GlutenException("Not yet implemented");
-  }
-  void injectWriteFilesTempPath(const std::string& path) override {
     throw GlutenException("Not yet implemented");
   }
 
@@ -99,9 +103,11 @@ class DummyRuntime final : public Runtime {
     throw GlutenException("Not yet implemented");
   }
 
- private:
-  ResourceMap<std::shared_ptr<ResultIterator>> resultIteratorHolder_;
+  std::shared_ptr<ArrowWriter> createArrowWriter(const std::string& path) override {
+    throw GlutenException("Not yet implemented");
+  }
 
+ private:
   class DummyResultIterator : public ColumnarBatchIterator {
    public:
     std::shared_ptr<ColumnarBatch> next() override {
@@ -118,20 +124,37 @@ class DummyRuntime final : public Runtime {
   };
 };
 
-static Runtime* dummyRuntimeFactory(const std::unordered_map<std::string, std::string> conf) {
-  return new DummyRuntime(conf);
+static Runtime* dummyRuntimeFactory(
+    const std::string& kind,
+    MemoryManager* mm,
+    const std::unordered_map<std::string, std::string> conf) {
+  return new DummyRuntime(kind, dynamic_cast<DummyMemoryManager*>(mm), conf);
+}
+
+static void dummyRuntimeReleaser(Runtime* runtime) {
+  delete runtime;
 }
 
 TEST(TestRuntime, CreateRuntime) {
-  Runtime::registerFactory("DUMMY", dummyRuntimeFactory);
-  auto runtime = Runtime::create("DUMMY");
+  Runtime::registerFactory(kDummyBackendKind, dummyRuntimeFactory, dummyRuntimeReleaser);
+  DummyMemoryManager mm(kDummyBackendKind);
+  auto runtime = Runtime::create(kDummyBackendKind, &mm);
   ASSERT_EQ(typeid(*runtime), typeid(DummyRuntime));
   Runtime::release(runtime);
 }
 
+TEST(TestRuntime, CreateVeloxRuntime) {
+  VeloxBackend::create({});
+  auto mm = MemoryManager::create(kVeloxBackendKind, AllocationListener::noop());
+  auto runtime = Runtime::create(kVeloxBackendKind, mm);
+  ASSERT_EQ(typeid(*runtime), typeid(VeloxRuntime));
+  Runtime::release(runtime);
+}
+
 TEST(TestRuntime, GetResultIterator) {
-  auto runtime = std::make_shared<DummyRuntime>(std::unordered_map<std::string, std::string>());
-  auto iter = runtime->createResultIterator(nullptr, "/tmp/test-spill", {}, {});
+  DummyMemoryManager mm(kDummyBackendKind);
+  auto runtime = std::make_shared<DummyRuntime>(kDummyBackendKind, &mm, std::unordered_map<std::string, std::string>());
+  auto iter = runtime->createResultIterator("/tmp/test-spill", {}, {});
   ASSERT_TRUE(iter->hasNext());
   auto next = iter->next();
   ASSERT_NE(next, nullptr);

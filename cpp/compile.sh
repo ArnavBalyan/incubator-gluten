@@ -21,8 +21,7 @@ BUILD_VELOX_BACKEND=OFF
 BUILD_TESTS=OFF
 BUILD_EXAMPLES=OFF
 BUILD_BENCHMARKS=OFF
-BUILD_JEMALLOC=OFF
-BUILD_PROTOBUF=OFF
+ENABLE_JEMALLOC_STATS=OFF
 ENABLE_QAT=OFF
 ENABLE_HBM=OFF
 ENABLE_GCS=OFF
@@ -30,7 +29,19 @@ ENABLE_S3=OFF
 ENABLE_HDFS=OFF
 ENABLE_ABFS=OFF
 VELOX_HOME=
-NPROC=$(nproc --ignore=2)
+# set default number of threads as cpu cores minus 2
+if [[ "$(uname)" == "Darwin" ]]; then
+    physical_cpu_cores=$(sysctl -n hw.physicalcpu)
+    ignore_cores=2
+    if [ "$physical_cpu_cores" -gt "$ignore_cores" ]; then
+        NPROC=${NPROC:-$(($physical_cpu_cores - $ignore_cores))}
+    else
+        NPROC=${NPROC:-$physical_cpu_cores}
+    fi
+else
+    NPROC=${NPROC:-$(nproc --ignore=2)}
+fi
+echo "set default number of threads is ${NPROC}"
 
 for arg in "$@"; do
   case $arg in
@@ -58,8 +69,8 @@ for arg in "$@"; do
     BUILD_BENCHMARKS=("${arg#*=}")
     shift # Remove argument name from processing
     ;;
-  --build_jemalloc=*)
-    BUILD_JEMALLOC=("${arg#*=}")
+  --enable_jemalloc_stats=*)
+    ENABLE_JEMALLOC_STATS=("${arg#*=}")
     shift # Remove argument name from processing
     ;;
   --enable_qat=*)
@@ -68,10 +79,6 @@ for arg in "$@"; do
     ;;
   --enable_hbm=*)
     ENABLE_HBM=("${arg#*=}")
-    shift # Remove argument name from processing
-    ;;
-  --build_protobuf=*)
-    BUILD_PROTOBUF=("${arg#*=}")
     shift # Remove argument name from processing
     ;;
   --enable_gcs=*)
@@ -115,9 +122,8 @@ echo "BUILD_VELOX_BACKEND=${BUILD_VELOX_BACKEND}"
 echo "BUILD_TESTS=${BUILD_TESTS}"
 echo "BUILD_EXAMPLES=${BUILD_EXAMPLES}"
 echo "BUILD_BENCHMARKS=${BUILD_BENCHMARKS}"
-echo "BUILD_JEMALLOC=${BUILD_JEMALLOC}"
+echo "ENABLE_JEMALLOC_STATS=${ENABLE_JEMALLOC_STATS}"
 echo "ENABLE_HBM=${ENABLE_HBM}"
-echo "BUILD_PROTOBUF=${BUILD_PROTOBUF}"
 echo "ENABLE_GCS=${ENABLE_GCS}"
 echo "ENABLE_S3=${ENABLE_S3}"
 echo "ENABLE_HDFS=${ENABLE_HDFS}"
@@ -131,12 +137,11 @@ cd build
 cmake .. \
   -DBUILD_TESTS=${BUILD_TESTS} \
   -DBUILD_EXAMPLES=${BUILD_EXAMPLES} \
-  -DBUILD_JEMALLOC=${BUILD_JEMALLOC} \
+  -DENABLE_JEMALLOC_STATS=${ENABLE_JEMALLOC_STATS} \
   -DBUILD_VELOX_BACKEND=${BUILD_VELOX_BACKEND} \
   -DVELOX_HOME=${VELOX_HOME} \
   -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
   -DBUILD_BENCHMARKS=${BUILD_BENCHMARKS} \
-  -DBUILD_PROTOBUF=${BUILD_PROTOBUF} \
   -DENABLE_QAT=${ENABLE_QAT} \
   -DENABLE_HBM=${ENABLE_HBM} \
   -DENABLE_GCS=${ENABLE_GCS} \

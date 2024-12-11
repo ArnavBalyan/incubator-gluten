@@ -15,8 +15,10 @@
  * limitations under the License.
  */
 
-#include <DataTypes/IDataType.h>
+#include <DataTypes/DataTypeNullable.h>
+#include <Parser/ExpressionParser.h>
 #include <Parser/FunctionParser.h>
+#include <Common/BlockTypeUtils.h>
 #include <Common/CHUtil.h>
 
 namespace DB
@@ -34,23 +36,23 @@ namespace local_engine
 class FunctionParserLocate : public FunctionParser
 {
 public:
-    explicit FunctionParserLocate(SerializedPlanParser * plan_parser_) : FunctionParser(plan_parser_) { }
+    explicit FunctionParserLocate(ParserContextPtr parser_context_) : FunctionParser(parser_context_) { }
     ~FunctionParserLocate() override = default;
 
     static constexpr auto name = "locate";
 
     String getName() const override { return name; }
 
-    const ActionsDAG::Node * parse(const substrait::Expression_ScalarFunction & substrait_func, ActionsDAGPtr & actions_dag) const override
+    const ActionsDAG::Node * parse(const substrait::Expression_ScalarFunction & substrait_func, ActionsDAG & actions_dag) const override
     {
         /// Parse locate(substr, str, start_pos) as if(isNull(start_pos), 0, positionUTF8Spark(str, substr, start_pos)
-        auto parsed_args = parseFunctionArguments(substrait_func, "", actions_dag);
+        auto parsed_args = parseFunctionArguments(substrait_func, actions_dag);
         if (parsed_args.size() != 3)
             throw Exception(DB::ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH, "Function {} requires exactly three arguments", getName());
 
         const auto * substr_arg = parsed_args[0];
         const auto * str_arg = parsed_args[1];
-        const auto * start_pos_arg = ActionsDAGUtil::convertNodeType(actions_dag, parsed_args[2], "Nullable(UInt32)");
+        const auto * start_pos_arg = ActionsDAGUtil::convertNodeType(actions_dag, parsed_args[2], makeNullable(UINT()));
         const auto * is_start_pos_null_node = toFunctionNode(actions_dag, "isNull", {start_pos_arg});
         const auto * const_1_node = addColumnToActionsDAG(actions_dag, std::make_shared<DataTypeUInt64>(), 0);
         const auto * position_node = toFunctionNode(actions_dag, "positionUTF8Spark", {str_arg, substr_arg, start_pos_arg});

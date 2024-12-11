@@ -18,9 +18,10 @@ package org.apache.spark.sql.execution
 
 import org.apache.gluten.metrics.GlutenTimeMetric
 
-import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.expressions.{And, Attribute, AttributeReference, BoundReference, DynamicPruningExpression, Expression, FileSourceMetadataAttribute, PlanExpression, Predicate}
-import org.apache.spark.sql.execution.datasources.{FileFormat, HadoopFsRelation, PartitionDirectory}
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
+import org.apache.spark.sql.catalyst.expressions.{And, Attribute, AttributeReference, BoundReference, Expression, FileSourceMetadataAttribute, PlanExpression, Predicate}
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, PartitionDirectory}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.types.StructType
@@ -65,8 +66,7 @@ abstract class FileSourceScanExecShim(
     val metadataColumnsNames = metadataColumns.map(_.name)
     output
       .filterNot(metadataColumns.toSet)
-      .exists(v => metadataColumnsNames.contains(v.name)) ||
-    output.exists(a => a.name == "$path" || a.name == "$bucket")
+      .exists(v => metadataColumnsNames.contains(v.name))
   }
 
   def isMetadataColumn(attr: Attribute): Boolean = metadataColumns.contains(attr)
@@ -160,4 +160,19 @@ abstract class FileSourceScanExecShim(
     sendDriverMetrics()
     selected
   }
+}
+
+abstract class ArrowFileSourceScanLikeShim(original: FileSourceScanExec)
+  extends DataSourceScanExec {
+  override val nodeNamePrefix: String = "ArrowFile"
+
+  override lazy val metrics = original.metrics
+
+  override def tableIdentifier: Option[TableIdentifier] = original.tableIdentifier
+
+  override def inputRDDs(): Seq[RDD[InternalRow]] = original.inputRDDs()
+
+  override def relation: HadoopFsRelation = original.relation
+
+  override protected def metadata: Map[String, String] = original.metadata
 }

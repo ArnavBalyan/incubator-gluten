@@ -65,7 +65,7 @@ class HashAggregateMetricsUpdater(val metrics: Map[String, SQLMetric])
         }
       }
     } catch {
-      case e: Throwable =>
+      case e: Exception =>
         logError(s"Updating native metrics failed due to ${e.getCause}.")
         throw e
     }
@@ -77,10 +77,12 @@ object HashAggregateMetricsUpdater {
     "AggregatingTransform",
     "StreamingAggregatingTransform",
     "MergingAggregatedTransform",
+    "GraceAggregatingTransform",
     "GraceMergingAggregatedTransform")
   val CH_PLAN_NODE_NAME = Array(
     "AggregatingTransform",
     "StreamingAggregatingTransform",
     "MergingAggregatedTransform",
+    "GraceAggregatingTransform",
     "GraceMergingAggregatedTransform")
 }

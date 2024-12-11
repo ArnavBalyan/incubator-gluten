@@ -26,11 +26,13 @@ class RoundRobinPartitioner final : public Partitioner {
   RoundRobinPartitioner(int32_t numPartitions, int32_t startPartitionId)
       : Partitioner(numPartitions, false), pidSelection_(startPartitionId % numPartitions) {}
 
+  arrow::Status compute(const int32_t* pidArr, const int64_t numRows, std::vector<uint32_t>& row2Partition) override;
+
   arrow::Status compute(
       const int32_t* pidArr,
       const int64_t numRows,
-      std::vector<uint32_t>& row2Partition,
-      std::vector<uint32_t>& partition2RowCount) override;
+      const int32_t vectorIndex,
+      std::unordered_map<int32_t, std::vector<int64_t>>& rowVectorIndexMap) override;
 
  private:
   friend class RoundRobinPartitionerTest;

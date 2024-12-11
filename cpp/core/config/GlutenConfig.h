@@ -18,6 +18,7 @@
 #pragma once
 
 #include <jni.h>
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 
@@ -30,17 +31,22 @@ const std::string kGlutenSaveDir = "spark.gluten.saveDir";
 
 const std::string kCaseSensitive = "spark.sql.caseSensitive";
 
-const std::string kLegacySize = "spark.sql.legacy.sizeOfNull";
-
 const std::string kSessionTimezone = "spark.sql.session.timeZone";
+
+const std::string kAllowPrecisionLoss = "spark.sql.decimalOperations.allowPrecisionLoss";
 
 const std::string kIgnoreMissingFiles = "spark.sql.files.ignoreMissingFiles";
 
 const std::string kDefaultSessionTimezone = "spark.gluten.sql.session.timeZone.default";
 
+const std::string kSparkOverheadMemory = "spark.gluten.memoryOverhead.size.in.bytes";
+
 const std::string kSparkOffHeapMemory = "spark.gluten.memory.offHeap.size.in.bytes";
 
 const std::string kSparkTaskOffHeapMemory = "spark.gluten.memory.task.offHeap.size.in.bytes";
+
+const std::string kMemoryReservationBlockSize = "spark.gluten.memory.reservationBlockSize";
+const uint64_t kMemoryReservationBlockSizeDefault = 8 << 20;
 
 const std::string kSparkBatchSize = "spark.gluten.sql.columnar.maxBatchSize";
 
@@ -53,6 +59,8 @@ const std::string kGzipWindowSize4k = "4096";
 
 const std::string kParquetCompressionCodec = "spark.sql.parquet.compression.codec";
 
+const std::string kColumnarToRowMemoryThreshold = "spark.gluten.sql.columnarToRowMemoryThreshold";
+
 const std::string kUGIUserName = "spark.gluten.ugi.username";
 const std::string kUGITokens = "spark.gluten.ugi.tokens";
 
@@ -61,12 +69,11 @@ const std::string kShuffleCompressionCodecBackend = "spark.gluten.sql.columnar.s
 const std::string kQatBackendName = "qat";
 const std::string kIaaBackendName = "iaa";
 
-// Velox conf
-const std::string kGlogVerboseLevel = "spark.gluten.sql.columnar.backend.velox.glogVerboseLevel";
-const uint32_t kGlogVerboseLevelDefault = 0;
-const uint32_t kGlogVerboseLevelMaximum = 99;
-const std::string kGlogSeverityLevel = "spark.gluten.sql.columnar.backend.velox.glogSeverityLevel";
-const uint32_t kGlogSeverityLevelDefault = 1;
+const std::string kSparkRedactionRegex = "spark.redaction.regex";
+const std::string kSparkRedactionString = "*********(redacted)";
+
+const std::string kSparkLegacyTimeParserPolicy = "spark.sql.legacy.timeParserPolicy";
+const std::string kShuffleFileBufferSize = "spark.shuffle.file.buffer";
 
 std::unordered_map<std::string, std::string>
 parseConfMap(JNIEnv* env, const uint8_t* planData, const int32_t planDataLength);

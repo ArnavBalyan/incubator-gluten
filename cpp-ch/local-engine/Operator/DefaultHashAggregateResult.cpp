@@ -15,22 +15,17 @@
  * limitations under the License.
  */
 #include "DefaultHashAggregateResult.h"
-#include <memory>
+
 #include <Columns/ColumnNullable.h>
-#include <Columns/ColumnsNumber.h>
 #include <Core/ColumnWithTypeAndName.h>
-#include <Core/ColumnsWithTypeAndName.h>
 #include <DataTypes/DataTypeNullable.h>
-#include <DataTypes/DataTypesNumber.h>
-#include <Operator/ExpandTransorm.h>
+#include <Operator/ExpandTransform.h>
 #include <Processors/Chunk.h>
 #include <Processors/IProcessor.h>
 #include <Processors/Transforms/AggregatingTransform.h>
 #include <QueryPipeline/Pipe.h>
 #include <QueryPipeline/QueryPipelineBuilder.h>
-#include <Poco/Logger.h>
 #include <Common/CHUtil.h>
-#include <Common/logger_useful.h>
 
 namespace local_engine
 {
@@ -116,7 +111,7 @@ public:
             has_input = true;
             output_chunk = DB::Chunk(result_cols, 1);
             auto info = std::make_shared<DB::AggregatedChunkInfo>();
-            output_chunk.setChunkInfo(info);
+            output_chunk.getChunkInfos().add(std::move(info));
             return Status::Ready;
         }
 
@@ -124,10 +119,10 @@ public:
         if (input.hasData())
         {
             output_chunk = input.pull(true);
-            if (!output_chunk.hasChunkInfo())
+            if (output_chunk.getChunkInfos().empty())
             {
                 auto info = std::make_shared<DB::AggregatedChunkInfo>();
-                output_chunk.setChunkInfo(info);
+                output_chunk.getChunkInfos().add(std::move(info));
             }
             has_input = true;
             return Status::Ready;
@@ -144,8 +139,8 @@ private:
     DB::Chunk output_chunk;
 };
 
-DefaultHashAggregateResultStep::DefaultHashAggregateResultStep(const DB::DataStream & input_stream_)
-    : DB::ITransformingStep(input_stream_, input_stream_.header, getTraits())
+DefaultHashAggregateResultStep::DefaultHashAggregateResultStep(const DB::Block & input_header)
+    : DB::ITransformingStep(input_header, adjustOutputHeader(input_header), getTraits())
 {
 }
 
@@ -174,8 +169,7 @@ void DefaultHashAggregateResultStep::describePipeline(DB::IQueryPlanStep::Format
         DB::IQueryPlanStep::describePipeline(processors, settings);
 }
 
-void DefaultHashAggregateResultStep::updateOutputStream()
+void DefaultHashAggregateResultStep::updateOutputHeader()
 {
-    createOutputStream(input_streams.front(), input_streams.front().header, getDataStreamTraits());
 }
 }

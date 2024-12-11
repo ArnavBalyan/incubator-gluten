@@ -30,7 +30,7 @@ namespace local_engine
 class FunctionParserExpm1 : public FunctionParser
 {
 public:
-    explicit FunctionParserExpm1(SerializedPlanParser * plan_parser_) : FunctionParser(plan_parser_) {}
+    explicit FunctionParserExpm1(ParserContextPtr parser_context_) : FunctionParser(parser_context_) {}
     ~FunctionParserExpm1() override = default;
 
     static constexpr auto name = "expm1";
@@ -39,10 +39,10 @@ public:
 
     const ActionsDAG::Node * parse(
         const substrait::Expression_ScalarFunction & substrait_func,
-        ActionsDAGPtr & actions_dag) const override
+        ActionsDAG & actions_dag) const override
     {
         /// parse expm1(x) as exp(x) - 1
-        auto parsed_args = parseFunctionArguments(substrait_func, "", actions_dag);
+        auto parsed_args = parseFunctionArguments(substrait_func, actions_dag);
         if (parsed_args.size() != 1)
             throw Exception(ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH, "Function {} requires exactly one arguments", getName());
 

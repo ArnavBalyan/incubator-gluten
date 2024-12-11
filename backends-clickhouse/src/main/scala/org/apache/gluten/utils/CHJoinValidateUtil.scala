@@ -17,96 +17,56 @@
 package org.apache.gluten.utils
 
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.catalyst.expressions.{AttributeSet, EqualTo, Expression, GreaterThan, GreaterThanOrEqual, In, LessThan, LessThanOrEqual, Not, Or}
-import org.apache.spark.sql.catalyst.plans.JoinType
+import org.apache.spark.sql.catalyst.expressions.{AttributeSet, Expression}
+import org.apache.spark.sql.catalyst.plans._
+
+trait JoinStrategy {
+  val joinType: JoinType
+}
+case class UnknownJoinStrategy(joinType: JoinType) extends JoinStrategy {}
+case class ShuffleHashJoinStrategy(joinType: JoinType) extends JoinStrategy {}
+case class BroadcastHashJoinStrategy(joinType: JoinType) extends JoinStrategy {}
+case class SortMergeJoinStrategy(joinType: JoinType) extends JoinStrategy {}
 
 /**
- * The logic here is that if it is not an equi-join spark will create BNLJ, which will fallback, if
- * it is an equi-join, spark will create BroadcastHashJoin or ShuffleHashJoin, for these join types,
- * we need to filter For cases that cannot be handled by the backend, 1 there are at least two
- * different tables column and Literal in the condition Or condition for comparison, for example: (a
- * join b on a.a1 = b.b1 and (a.a2 > 1 or b.b2 < 2) ) 2 tow join key for inequality comparison (!= ,
- * > , <), for example: (a join b on a.a1 > b.b1) There will be a fallback for Nullaware Jion For
- * Existence Join which is just an optimization of exist subquery, it will also fallback
+ * BroadcastHashJoinStrategy and ShuffleHashJoinStrategy are relatively complete, They support
+ * left/right/inner full/anti/semi join, existence Join, and also support join contiditions with
+ * columns from both sides. e.g. (a join b on a.a1 = b.b1 and a.a2 > 1 and b.b2 < 2)
+ * SortMergeJoinStrategy is not fully supported for all cases in CH.
  */
 
 object CHJoinValidateUtil extends Logging {
   def hasTwoTableColumn(
       leftOutputSet: AttributeSet,
       rightOutputSet: AttributeSet,
-      l: Expression,
-      r: Expression): Boolean = {
-    val allReferences = l.references ++ r.references
+      expr: Expression): Boolean = {
+    val allReferences = expr.references
     !(allReferences.subsetOf(leftOutputSet) || allReferences.subsetOf(rightOutputSet))
   }
 
   def shouldFallback(
-      joinType: JoinType,
+      joinStrategy: JoinStrategy,
       leftOutputSet: AttributeSet,
       rightOutputSet: AttributeSet,
-      condition: Option[Expression],
-      isSMJ: Boolean = false): Boolean = {
-    var shouldFallback = false
-    if (joinType.toString.contains("ExistenceJoin")) {
-      return true
+      condition: Option[Expression]): Boolean = {
+
+    val hasMixedFilterCondition =
+      condition.isDefined && hasTwoTableColumn(leftOutputSet, rightOutputSet, condition.get)
+    val shouldFallback = joinStrategy match {
+      case SortMergeJoinStrategy(joinType) =>
+        if (!joinType.isInstanceOf[ExistenceJoin] && joinType.sql.contains("INNER")) {
+          false
+        } else {
+          joinType.sql.contains("SEMI") || joinType.sql.contains("ANTI") || joinType.toString
+            .contains("ExistenceJoin") || hasMixedFilterCondition
+        }
+      case UnknownJoinStrategy(joinType) =>
+        throw new IllegalArgumentException(s"Unknown join type $joinStrategy")
+      case _ => false
     }
-    if (joinType.sql.equals("INNER")) {
-      return shouldFallback
-    }
-    if (isSMJ) {
-      if (
-        joinType.sql.contains("SEMI")
-        || joinType.sql.contains("ANTI")
-      ) {
-        return true
-      }
-    }
-    if (condition.isDefined) {
-      condition.get.transform {
-        case Or(l, r) =>
-          if (hasTwoTableColumn(leftOutputSet, rightOutputSet, l, r)) {
-            shouldFallback = true
-          }
-          Or(l, r)
-        case Not(EqualTo(l, r)) =>
-          if (hasTwoTableColumn(leftOutputSet, rightOutputSet, l, r)) {
-            shouldFallback = true
-          }
-          Not(EqualTo(l, r))
-        case LessThan(l, r) =>
-          if (hasTwoTableColumn(leftOutputSet, rightOutputSet, l, r)) {
-            shouldFallback = true
-          }
-          LessThan(l, r)
-        case LessThanOrEqual(l, r) =>
-          if (hasTwoTableColumn(leftOutputSet, rightOutputSet, l, r)) {
-            shouldFallback = true
-          }
-          LessThanOrEqual(l, r)
-        case GreaterThan(l, r) =>
-          if (hasTwoTableColumn(leftOutputSet, rightOutputSet, l, r)) {
-            shouldFallback = true
-          }
-          GreaterThan(l, r)
-        case GreaterThanOrEqual(l, r) =>
-          if (hasTwoTableColumn(leftOutputSet, rightOutputSet, l, r)) {
-            shouldFallback = true
-          }
-          GreaterThanOrEqual(l, r)
-        case In(l, r) =>
-          r.foreach(
-            e => {
-              if (hasTwoTableColumn(leftOutputSet, rightOutputSet, l, e)) {
-                shouldFallback = true
-              }
-            })
-          In(l, r)
-        case EqualTo(l, r) =>
-          if (hasTwoTableColumn(leftOutputSet, rightOutputSet, l, r)) {
-            shouldFallback = true
-          }
-          EqualTo(l, r)
-      }
+
+    if (shouldFallback) {
+      logError(s"Fallback for join type $joinStrategy")
     }
     shouldFallback
   }

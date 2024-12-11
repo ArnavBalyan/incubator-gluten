@@ -16,17 +16,15 @@
  */
 package org.apache.spark.softaffinity
 
+import org.apache.gluten.GlutenConfig
+import org.apache.gluten.logging.LogLevelUtil
 import org.apache.gluten.softaffinity.{AffinityManager, SoftAffinityManager}
-import org.apache.gluten.utils.LogLevelUtil
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.scheduler.ExecutorCacheTaskLocation
 import org.apache.spark.sql.execution.datasources.FilePartition
 
 abstract class Affinity(val manager: AffinityManager) extends LogLevelUtil with Logging {
-
-  private lazy val logLevel: String = manager.logLevel
-
   protected def internalGetHostLocations(filePath: String): Array[String]
   private def shouldUseSoftAffinity(
       filePaths: Array[String],
@@ -39,7 +37,7 @@ abstract class Affinity(val manager: AffinityManager) extends LogLevelUtil with 
       filePaths: Array[String],
       preferredLocations: Array[String]): Array[String] = {
     if (shouldUseSoftAffinity(filePaths, preferredLocations)) {
-      internalGetHostLocations(filePaths.min)
+      internalGetHostLocations(filePaths(0))
     } else {
       preferredLocations
     }
@@ -68,7 +66,7 @@ abstract class Affinity(val manager: AffinityManager) extends LogLevelUtil with 
     val locations = manager.askExecutors(filePath)
     if (locations.nonEmpty) {
       logOnLevel(
-        logLevel,
+        GlutenConfig.getConf.softAffinityLogLevel,
         s"SAMetrics=File $filePath - the expected executors are ${locations.mkString("_")} ")
       locations.map { case (executor, host) => toTaskLocation(host, executor) }
     } else {

@@ -15,30 +15,45 @@
  * limitations under the License.
  */
 #pragma once
-#include <unordered_map>
 #include <Interpreters/Context_fwd.h>
-#include <jni/ReservationListenerWrapper.h>
-#include <Common/CurrentThread.h>
+#include <Common/ConcurrentMap.h>
 #include <Common/ThreadStatus.h>
 
+namespace DB
+{
+struct ContextSharedPart;
+}
 namespace local_engine
 {
-int64_t initializeQuery(ReservationListenerWrapperPtr listener);
 
-void releaseAllocator(int64_t allocator_id);
-
-int64_t allocatorMemoryUsage(int64_t allocator_id);
-
-struct NativeAllocatorContext
+class QueryContext
 {
-    std::shared_ptr<DB::CurrentThread::QueryScope> query_scope;
-    std::shared_ptr<DB::ThreadStatus> thread_status;
-    DB::ContextMutablePtr query_context;
-    std::shared_ptr<DB::ThreadGroup> group;
-    ReservationListenerWrapperPtr listener;
+    struct Data;
+
+public:
+    static DB::ContextMutablePtr createGlobal();
+    static void resetGlobal();
+    static DB::ContextMutablePtr globalMutableContext();
+    static DB::ContextPtr globalContext();
+    static QueryContext & instance()
+    {
+        static QueryContext instance;
+        return instance;
+    }
+    int64_t initializeQuery(const String & task_id);
+    DB::ContextMutablePtr currentQueryContext();
+    String currentTaskIdOrEmpty();
+    static std::shared_ptr<DB::ThreadGroup> currentThreadGroup();
+    void logCurrentPerformanceCounters(ProfileEvents::Counters & counters, const String & task_id) const;
+    size_t currentPeakMemory(int64_t id);
+    void finalizeQuery(int64_t id);
+
+private:
+    QueryContext() = default;
+    LoggerPtr logger_ = getLogger("QueryContextManager");
+    ConcurrentMap<int64_t, std::shared_ptr<Data>> query_map_{};
 };
 
-using NativeAllocatorContextPtr = std::shared_ptr<NativeAllocatorContext>;
-
-NativeAllocatorContextPtr getAllocator(int64_t allocator);
+size_t currentThreadGroupMemoryUsage();
+double currentThreadGroupMemoryUsageRatio();
 }

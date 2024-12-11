@@ -16,8 +16,10 @@
  */
 package org.apache.gluten.backendsapi.velox
 
-import org.apache.gluten.backendsapi.TransformerApi
+import org.apache.gluten.backendsapi.{BackendsApiManager, TransformerApi}
+import org.apache.gluten.execution.WriteFilesExecTransformer
 import org.apache.gluten.expression.ConverterUtils
+import org.apache.gluten.runtime.Runtimes
 import org.apache.gluten.substrait.expression.{ExpressionBuilder, ExpressionNode}
 import org.apache.gluten.utils.InputPartitionsUtil
 import org.apache.gluten.vectorized.PlanEvaluatorJniWrapper
@@ -25,12 +27,13 @@ import org.apache.gluten.vectorized.PlanEvaluatorJniWrapper
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.connector.read.InputPartition
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, PartitionDirectory}
+import org.apache.spark.sql.execution.datasources.{FileFormat, HadoopFsRelation, PartitionDirectory}
+import org.apache.spark.sql.sources.DataSourceRegister
 import org.apache.spark.sql.types._
-import org.apache.spark.util.TaskResources
+import org.apache.spark.task.TaskResources
 import org.apache.spark.util.collection.BitSet
 
-import com.google.protobuf.{Any, Message}
+import com.google.protobuf.{Any, Message, StringValue}
 
 import java.util.{Map => JMap}
 
@@ -39,6 +42,7 @@ class VeloxTransformerApi extends TransformerApi with Logging {
   /** Generate Seq[InputPartition] for FileSourceScanExecTransformer. */
   def genInputPartitionSeq(
       relation: HadoopFsRelation,
+      requiredSchema: StructType,
       selectedPartitions: Array[PartitionDirectory],
       output: Seq[Attribute],
       bucketedScan: Boolean,
@@ -48,6 +52,7 @@ class VeloxTransformerApi extends TransformerApi with Logging {
       filterExprs: Seq[Expression] = Seq.empty): Seq[InputPartition] = {
     InputPartitionsUtil(
       relation,
+      requiredSchema,
       selectedPartitions,
       output,
       bucketedScan,
@@ -63,36 +68,52 @@ class VeloxTransformerApi extends TransformerApi with Logging {
     // TODO: IMPLEMENT SPECIAL PROCESS FOR VELOX BACKEND
   }
 
-  override def createDateDiffParamList(
-      start: ExpressionNode,
-      end: ExpressionNode): Iterable[ExpressionNode] = {
-    List(end, start)
-  }
-
-  override def createLikeParamList(
-      left: ExpressionNode,
-      right: ExpressionNode,
-      escapeChar: ExpressionNode): Iterable[ExpressionNode] = {
-    List(left, right, escapeChar)
-  }
-
   override def createCheckOverflowExprNode(
       args: java.lang.Object,
       substraitExprName: String,
       childNode: ExpressionNode,
+      childResultType: DataType,
       dataType: DecimalType,
       nullable: Boolean,
       nullOnOverflow: Boolean): ExpressionNode = {
-    val typeNode = ConverterUtils.getTypeNode(dataType, nullable)
-    ExpressionBuilder.makeCast(typeNode, childNode, !nullOnOverflow)
+    if (childResultType.equals(dataType)) {
+      childNode
+    } else {
+      val typeNode = ConverterUtils.getTypeNode(dataType, nullable)
+      ExpressionBuilder.makeCast(typeNode, childNode, !nullOnOverflow)
+    }
   }
 
   override def getNativePlanString(substraitPlan: Array[Byte], details: Boolean): String = {
     TaskResources.runUnsafe {
-      val jniWrapper = PlanEvaluatorJniWrapper.create()
+      val jniWrapper = PlanEvaluatorJniWrapper.create(
+        Runtimes.contextInstance(
+          BackendsApiManager.getBackendName,
+          "VeloxTransformerApi#getNativePlanString"))
       jniWrapper.nativePlanString(substraitPlan, details)
     }
   }
 
   override def packPBMessage(message: Message): Any = Any.pack(message, "")
+
+  override def genWriteParameters(
+      fileFormat: FileFormat,
+      writeOptions: Map[String, String]): Any = {
+    val fileFormatStr = fileFormat match {
+      case register: DataSourceRegister =>
+        register.shortName
+      case _ => "UnknownFileFormat"
+    }
+    val compressionCodec =
+      WriteFilesExecTransformer.getCompressionCodec(writeOptions).capitalize
+    val writeParametersStr = new StringBuffer("WriteParameters:")
+    writeParametersStr.append("is").append(compressionCodec).append("=1")
+    writeParametersStr.append(";format=").append(fileFormatStr).append("\n")
+
+    packPBMessage(
+      StringValue
+        .newBuilder()
+        .setValue(writeParametersStr.toString)
+        .build())
+  }
 }

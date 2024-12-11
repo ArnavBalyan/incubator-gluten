@@ -5,6 +5,7 @@
 
 # logs
 *.log
+**/core$
 
 # cache files
 *.cache
@@ -51,11 +52,11 @@ thirdparty/*.tar*
 CMakeFiles/
 CMakeCache.txt
 CTestTestfile.cmake
-Makefile
 cmake_install.cmake
 Testing/
 cmake-build-debug/
 cmake-build-release/
+ep/_ep/
 
 # Editor temporary/working/backup files #
 .#*
@@ -92,3 +93,6 @@ dist/
 
 /cpp-ch/local-engine/Parser/*_udf
 !/cpp-ch/local-engine/Parser/example_udf
+
+# For Hive
+metastore_db/

@@ -18,103 +18,79 @@ package org.apache.gluten.vectorized;
 
 import org.apache.gluten.GlutenConfig;
 import org.apache.gluten.backendsapi.BackendsApiManager;
-import org.apache.gluten.memory.alloc.CHNativeMemoryAllocators;
-import org.apache.gluten.substrait.expression.ExpressionBuilder;
-import org.apache.gluten.substrait.expression.StringMapNode;
-import org.apache.gluten.substrait.extensions.AdvancedExtensionNode;
-import org.apache.gluten.substrait.extensions.ExtensionBuilder;
-import org.apache.gluten.substrait.plan.PlanBuilder;
+import org.apache.gluten.execution.ColumnarNativeIterator;
+import org.apache.gluten.memory.CHThreadGroup;
+import org.apache.gluten.utils.ConfigUtil;
 
-import org.apache.spark.SparkConf;
 import org.apache.spark.sql.internal.SQLConf;
 
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
-import scala.Tuple2;
-import scala.collection.JavaConverters;
+public class CHNativeExpressionEvaluator extends ExpressionEvaluatorJniWrapper {
 
-public class CHNativeExpressionEvaluator {
-  private final ExpressionEvaluatorJniWrapper jniWrapper;
-
-  public CHNativeExpressionEvaluator() {
-    jniWrapper = new ExpressionEvaluatorJniWrapper();
-  }
+  private CHNativeExpressionEvaluator() {}
 
   // Used to initialize the native computing.
-  public void initNative(SparkConf conf) {
-    Tuple2<String, String>[] all = conf.getAll();
-    Map<String, String> confMap =
-        Arrays.stream(all).collect(Collectors.toMap(Tuple2::_1, Tuple2::_2));
-    String prefix = BackendsApiManager.getSettings().getBackendConfigPrefix();
+  public static void initNative(scala.collection.Map<String, String> conf) {
     Map<String, String> nativeConfMap =
-        GlutenConfig.getNativeBackendConf(prefix, JavaConverters.mapAsScalaMap(confMap));
+        GlutenConfig.getNativeBackendConf(BackendsApiManager.getBackendName(), conf);
 
     // Get the customer config from SparkConf for each backend
-    BackendsApiManager.getTransformerApiInstance().postProcessNativeConfig(nativeConfMap, prefix);
+    BackendsApiManager.getTransformerApiInstance()
+        .postProcessNativeConfig(
+            nativeConfMap, GlutenConfig.prefixOf(BackendsApiManager.getBackendName()));
 
-    jniWrapper.nativeInitNative(buildNativeConf(nativeConfMap));
+    nativeInitNative(ConfigUtil.serialize(nativeConfMap));
   }
 
-  public void finalizeNative() {
-    jniWrapper.nativeFinalizeNative();
+  public static void finalizeNative() {
+    nativeFinalizeNative();
   }
 
   // Used to validate the Substrait plan in native compute engine.
-  public boolean doValidate(byte[] subPlan) {
-    return jniWrapper.nativeDoValidate(subPlan);
+  public static boolean doValidate(byte[] subPlan) {
+    throw new UnsupportedOperationException("doValidate is not supported in Clickhouse Backend");
   }
 
-  private byte[] buildNativeConf(Map<String, String> confs) {
-    StringMapNode stringMapNode = ExpressionBuilder.makeStringMap(confs);
-    AdvancedExtensionNode extensionNode =
-        ExtensionBuilder.makeAdvancedExtension(
-            BackendsApiManager.getTransformerApiInstance()
-                .packPBMessage(stringMapNode.toProtobuf()));
-    return PlanBuilder.makePlan(extensionNode).toProtobuf().toByteArray();
-  }
-
-  private Map<String, String> getNativeBackendConf() {
+  private static Map<String, String> getNativeBackendConf() {
     return GlutenConfig.getNativeBackendConf(
-        BackendsApiManager.getSettings().getBackendConfigPrefix(), SQLConf.get().getAllConfs());
+        BackendsApiManager.getBackendName(), SQLConf.get().getAllConfs());
   }
 
   // Used by WholeStageTransform to create the native computing pipeline and
   // return a columnar result iterator.
-  public GeneralOutIterator createKernelWithBatchIterator(
+  public static BatchIterator createKernelWithBatchIterator(
       byte[] wsPlan,
       byte[][] splitInfo,
-      List<GeneralInIterator> iterList,
+      List<ColumnarNativeIterator> iterList,
       boolean materializeInput) {
-    long allocId = CHNativeMemoryAllocators.contextInstance().getNativeInstanceId();
+    CHThreadGroup.registerNewThreadGroup();
     long handle =
-        jniWrapper.nativeCreateKernelWithIterator(
-            allocId,
+        nativeCreateKernelWithIterator(
             wsPlan,
             splitInfo,
-            iterList.toArray(new GeneralInIterator[0]),
-            buildNativeConf(getNativeBackendConf()),
+            iterList.toArray(new ColumnarNativeIterator[0]),
+            ConfigUtil.serialize(getNativeBackendConf()),
             materializeInput);
-    return createOutIterator(handle);
+    return createBatchIterator(handle);
   }
 
   // Only for UT.
-  public GeneralOutIterator createKernelWithBatchIterator(
-      long allocId, byte[] wsPlan, byte[][] splitInfo, List<GeneralInIterator> iterList) {
+  public static BatchIterator createKernelWithBatchIterator(
+      byte[] wsPlan, byte[][] splitInfo, List<ColumnarNativeIterator> iterList) {
+    CHThreadGroup.registerNewThreadGroup();
     long handle =
-        jniWrapper.nativeCreateKernelWithIterator(
-            allocId,
+        nativeCreateKernelWithIterator(
             wsPlan,
             splitInfo,
-            iterList.toArray(new GeneralInIterator[0]),
-            buildNativeConf(getNativeBackendConf()),
+            iterList.toArray(new ColumnarNativeIterator[0]),
+            ConfigUtil.serialize(getNativeBackendConf()),
             false);
-    return createOutIterator(handle);
+    return createBatchIterator(handle);
   }
 
-  private GeneralOutIterator createOutIterator(long nativeHandle) {
+  private static BatchIterator createBatchIterator(long nativeHandle) {
     return new BatchIterator(nativeHandle);
   }
 }

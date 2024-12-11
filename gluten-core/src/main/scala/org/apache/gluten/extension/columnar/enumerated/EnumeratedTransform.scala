@@ -16,63 +16,70 @@
  */
 package org.apache.gluten.extension.columnar.enumerated
 
-import org.apache.gluten.extension.columnar.{TransformExchange, TransformJoin, TransformOthers, TransformSingleNode}
-import org.apache.gluten.extension.columnar.validator.Validator
-import org.apache.gluten.planner.GlutenOptimization
-import org.apache.gluten.planner.property.Conventions
+import org.apache.gluten.component.Component
+import org.apache.gluten.exception.GlutenException
+import org.apache.gluten.extension.columnar.ColumnarRuleApplier.ColumnarRuleCall
+import org.apache.gluten.extension.columnar.enumerated.planner.GlutenOptimization
+import org.apache.gluten.extension.columnar.enumerated.planner.property.Conv
+import org.apache.gluten.extension.injector.Injector
+import org.apache.gluten.extension.util.AdaptiveContext
+import org.apache.gluten.logging.LogLevelUtil
+import org.apache.gluten.ras.CostModel
 import org.apache.gluten.ras.property.PropertySet
-import org.apache.gluten.ras.rule.{RasRule, Shape, Shapes}
-import org.apache.gluten.utils.LogLevelUtil
+import org.apache.gluten.ras.rule.RasRule
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{SparkSession, SparkSessionExtensions}
 import org.apache.spark.sql.catalyst.rules.Rule
-import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution._
 
-case class EnumeratedTransform(session: SparkSession, outputsColumnar: Boolean)
+/**
+ * Rule to offload Spark query plan to Gluten query plan using a search algorithm and a defined cost
+ * model.
+ *
+ * The effect of this rule is similar to
+ * [[org.apache.gluten.extension.columnar.heuristic.HeuristicTransform]], except that the 3 stages
+ * in the heuristic version, known as rewrite, validate, offload, will take place together
+ * individually for each Spark query plan node in RAS rule
+ * [[org.apache.gluten.extension.columnar.enumerated.RasOffload]].
+ *
+ * The feature requires enabling RAS to function.
+ */
+case class EnumeratedTransform(costModel: CostModel[SparkPlan], rules: Seq[RasRule[SparkPlan]])
   extends Rule[SparkPlan]
   with LogLevelUtil {
-  import EnumeratedTransform._
 
-  private val rasRules = List(
-    AsRasImplement(TransformOthers()),
-    AsRasImplement(TransformExchange()),
-    AsRasImplement(TransformJoin()),
-    ImplementAggregate,
-    ImplementFilter,
-    PushFilterToScan,
-    FilterRemoveRule
-  )
+  private val optimization = {
+    GlutenOptimization
+      .builder()
+      .costModel(costModel)
+      .addRules(rules)
+      .create()
+  }
 
-  private val optimization = GlutenOptimization(rasRules)
-
-  private val reqConvention = Conventions.ANY
-  private val altConventions =
-    Seq(Conventions.GLUTEN_COLUMNAR, Conventions.ROW_BASED)
+  private val convReq = Conv.any
 
   override def apply(plan: SparkPlan): SparkPlan = {
-    val constraintSet = PropertySet(List(reqConvention))
-    val altConstraintSets =
-      altConventions.map(altConv => PropertySet(List(altConv)))
-    val planner = optimization.newPlanner(plan, constraintSet, altConstraintSets)
+    val constraintSet = PropertySet(Seq(convReq))
+    val planner = optimization.newPlanner(plan, constraintSet)
     val out = planner.plan()
     out
   }
 }
 
 object EnumeratedTransform {
-  private case class AsRasImplement(delegate: TransformSingleNode) extends RasRule[SparkPlan] {
-    override def shift(node: SparkPlan): Iterable[SparkPlan] = {
-      val out = List(delegate.impl(node))
-      out
-    }
-
-    override def shape(): Shape[SparkPlan] = Shapes.fixedHeight(1)
-  }
-
-  // TODO: Currently not in use. Prepared for future development.
-  implicit private class RasRuleImplicits(rasRule: RasRule[SparkPlan]) {
-    def withValidator(pre: Validator, post: Validator): RasRule[SparkPlan] = {
-      ConditionedRule.wrap(rasRule, pre, post)
-    }
+  // Creates a static EnumeratedTransform rule for use in certain
+  // places that requires to emulate the offloading of a Spark query plan.
+  //
+  // TODO: Avoid using this and eventually remove the API.
+  def static(): EnumeratedTransform = {
+    val exts = new SparkSessionExtensions()
+    val dummyInjector = new Injector(exts)
+    // Components should override Backend's rules. Hence, reversed injection order is applied.
+    Component.sorted().reverse.foreach(_.injectRules(dummyInjector))
+    val session = SparkSession.getActiveSession.getOrElse(
+      throw new GlutenException(
+        "HeuristicTransform#static can only be called when an active Spark session exists"))
+    val call = new ColumnarRuleCall(session, AdaptiveContext(session), false)
+    dummyInjector.gluten.ras.createEnumeratedTransform(call)
   }
 }

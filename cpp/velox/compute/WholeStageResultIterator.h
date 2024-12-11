@@ -22,9 +22,9 @@
 #include "memory/VeloxColumnarBatch.h"
 #include "substrait/SubstraitToVeloxPlan.h"
 #include "substrait/plan.pb.h"
-#include "utils/metrics.h"
+#include "utils/Metrics.h"
+#include "velox/common/config/Config.h"
 #include "velox/connectors/hive/iceberg/IcebergSplit.h"
-#include "velox/core/Config.h"
 #include "velox/core/PlanNode.h"
 #include "velox/exec/Task.h"
 
@@ -55,7 +55,9 @@ class WholeStageResultIterator : public ColumnarBatchIterator {
 
   Metrics* getMetrics(int64_t exportNanos) {
     collectMetrics();
-    metrics_->veloxToArrow = exportNanos;
+    if (metrics_) {
+      metrics_->veloxToArrow = exportNanos;
+    }
     return metrics_.get();
   }
 
@@ -80,7 +82,7 @@ class WholeStageResultIterator : public ColumnarBatchIterator {
       std::vector<facebook::velox::core::PlanNodeId>& nodeIds);
 
   /// Create connector config.
-  std::shared_ptr<facebook::velox::Config> createConnectorConfig();
+  std::shared_ptr<facebook::velox::config::ConfigBase> createConnectorConfig();
 
   /// Construct partition columns.
   void constructPartitionColumns(
@@ -103,13 +105,14 @@ class WholeStageResultIterator : public ColumnarBatchIterator {
   VeloxMemoryManager* memoryManager_;
 
   /// Config, task and plan.
-  const std::shared_ptr<const Config> veloxCfg_;
+  std::shared_ptr<config::ConfigBase> veloxCfg_;
   const SparkTaskInfo taskInfo_;
   std::shared_ptr<facebook::velox::exec::Task> task_;
   std::shared_ptr<const facebook::velox::core::PlanNode> veloxPlan_;
 
   /// Spill.
   std::string spillStrategy_;
+  std::shared_ptr<folly::Executor> spillExecutor_ = nullptr;
 
   /// Metrics
   std::unique_ptr<Metrics> metrics_{};
@@ -117,7 +120,7 @@ class WholeStageResultIterator : public ColumnarBatchIterator {
   /// All the children plan node ids with postorder traversal.
   std::vector<facebook::velox::core::PlanNodeId> orderedNodeIds_;
 
-  /// Node ids should be ommited in metrics.
+  /// Node ids should be omitted in metrics.
   std::unordered_set<facebook::velox::core::PlanNodeId> omittedNodeIds_;
   std::vector<facebook::velox::core::PlanNodeId> scanNodeIds_;
   std::vector<std::shared_ptr<SplitInfo>> scanInfos_;

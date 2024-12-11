@@ -16,9 +16,8 @@
  */
 package org.apache.gluten.utils;
 
-import org.apache.gluten.exec.Runtime;
-import org.apache.gluten.exec.RuntimeAware;
-import org.apache.gluten.exec.Runtimes;
+import org.apache.gluten.runtime.Runtime;
+import org.apache.gluten.runtime.RuntimeAware;
 
 public class VeloxBloomFilterJniWrapper implements RuntimeAware {
   private final Runtime runtime;
@@ -27,12 +26,12 @@ public class VeloxBloomFilterJniWrapper implements RuntimeAware {
     this.runtime = runtime;
   }
 
-  public static VeloxBloomFilterJniWrapper create() {
-    return new VeloxBloomFilterJniWrapper(Runtimes.contextInstance());
+  public static VeloxBloomFilterJniWrapper create(Runtime runtime) {
+    return new VeloxBloomFilterJniWrapper(runtime);
   }
 
   @Override
-  public long handle() {
+  public long rtHandle() {
     return runtime.getHandle();
   }
 

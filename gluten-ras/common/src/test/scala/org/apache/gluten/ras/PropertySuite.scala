@@ -72,7 +72,7 @@ abstract class PropertySuite extends AnyFunSuite {
     memo.memorize(ras, PassNodeType(1, PassNodeType(1, PassNodeType(1, TypedLeaf(TypeB, 1)))))
     val state = memo.newState()
     assert(state.allClusters().size == 4)
-    assert(state.getGroupCount() == 8)
+    assert(state.getGroupCount() == 4)
   }
 
   test(s"Get property") {
@@ -248,41 +248,6 @@ abstract class PropertySuite extends AnyFunSuite {
     val out = planner.plan()
 
     assert(out == TypedUnary(TypeA, 8, PassNodeType(5, TypedLeaf(TypeA, 10))))
-  }
-
-  test(s"Property convert - (A, B), alternative conventions") {
-    object ConvertEnforcerAndTypeAToTypeB extends RasRule[TestNode] {
-      override def shift(node: TestNode): Iterable[TestNode] = node match {
-        case TypeEnforcer(TypeB, _, TypedBinary(TypeA, 5, left, right)) =>
-          List(TypedBinary(TypeB, 0, left, right))
-        case _ => List.empty
-      }
-      override def shape(): Shape[TestNode] = Shapes.fixedHeight(2)
-    }
-
-    val ras =
-      Ras[TestNode](
-        PlanModelImpl,
-        CostModelImpl,
-        MetadataModelImpl,
-        propertyModel(zeroDepth),
-        ExplainImpl,
-        RasRule.Factory.reuse(List(ConvertEnforcerAndTypeAToTypeB)))
-        .withNewConfig(_ => conf)
-    val plan =
-      TypedBinary(TypeA, 5, TypedUnary(TypeA, 10, TypedLeaf(TypeA, 10)), TypedLeaf(TypeA, 10))
-    val planner = ras.newPlanner(
-      plan,
-      PropertySet(Seq(TypeAny)),
-      List(PropertySet(Seq(TypeB)), PropertySet(Seq(TypeC))))
-    val out = planner.plan()
-    assert(
-      out == TypedBinary(
-        TypeB,
-        0,
-        TypeEnforcer(TypeB, 1, TypedUnary(TypeA, 10, TypedLeaf(TypeA, 10))),
-        TypeEnforcer(TypeB, 1, TypedLeaf(TypeA, 10))))
-    assert(planner.newState().memoState().allGroups().size == 9)
   }
 
   test(s"Property convert - (A, B), Unary only has TypeA") {
@@ -573,7 +538,7 @@ object PropertySuite {
     override def any(): DummyProperty = DummyProperty(Int.MinValue)
     override def getProperty(plan: TestNode): DummyProperty = {
       plan match {
-        case Group(_, _, _) => throw new IllegalStateException()
+        case g: Group => g.constraintSet.get(this)
         case PUnary(_, prop, _) => prop
         case PLeaf(_, prop) => prop
         case PBinary(_, prop, _, _) => prop
@@ -645,7 +610,7 @@ object PropertySuite {
   case class PassNodeType(override val selfCost: Long, child: TestNode) extends TypedNode {
     override def nodeType: NodeType = child match {
       case n: TypedNode => n.nodeType
-      case g: Group => g.propSet.get(NodeTypeDef)
+      case g: Group => g.constraintSet.get(NodeTypeDef)
       case _ => throw new IllegalStateException()
     }
 
@@ -669,7 +634,7 @@ object PropertySuite {
     override def shift(node: TestNode): Iterable[TestNode] = {
       node match {
         case group: Group =>
-          val groupType = group.propSet.get(NodeTypeDef)
+          val groupType = group.constraintSet.get(NodeTypeDef)
           if (groupType.satisfies(reqType)) {
             List(group)
           } else {
@@ -710,6 +675,7 @@ object PropertySuite {
 
   object NodeTypeDef extends PropertyDef[TestNode, NodeType] {
     override def getProperty(plan: TestNode): NodeType = plan match {
+      case g: Group => g.constraintSet.get(this)
       case typed: TypedNode => typed.nodeType
       case _ => throw new IllegalStateException()
     }

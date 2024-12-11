@@ -16,6 +16,8 @@
  */
 package org.apache.spark.sql.extension
 
+import org.apache.gluten.GlutenConfig
+
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.GlutenSQLTestsTrait
 
@@ -32,7 +34,7 @@ class GlutenCustomerExtensionSuite extends GlutenSQLTestsTrait {
   }
 
   testGluten("test customer column rules") {
-    withSQLConf(("spark.gluten.enabled", "false")) {
+    withSQLConf((GlutenConfig.GLUTEN_ENABLED.key, "false")) {
       sql("create table my_parquet(id int) using parquet")
       sql("insert into my_parquet values (1)")
       sql("insert into my_parquet values (2)")
@@ -43,7 +45,7 @@ class GlutenCustomerExtensionSuite extends GlutenSQLTestsTrait {
         case f: TestFileSourceScanExecTransformer => f
       }
       assert(!testFileSourceScanExecTransformer.isEmpty)
-      assert(testFileSourceScanExecTransformer(0).nodeNamePrefix.equals("TestNativeFile"))
+      assert(testFileSourceScanExecTransformer(0).nodeNamePrefix.equals("TestFile"))
     }
   }
 }
