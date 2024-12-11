@@ -17,11 +17,11 @@
 
 #pragma once
 
+#include <algorithm>
 #include <memory>
+#include <mutex>
 
 namespace gluten {
-
-extern bool backtrace_allocation;
 
 class AllocationListener {
  public:
@@ -32,8 +32,69 @@ class AllocationListener {
   // Value of diff can be either positive or negative
   virtual void allocationChanged(int64_t diff) = 0;
 
+  virtual int64_t currentBytes() {
+    return 0;
+  }
+
+  virtual int64_t peakBytes() {
+    return 0;
+  }
+
  protected:
   AllocationListener() = default;
+};
+
+/// Memory changes will be round to specified block size which aim to decrease delegated listener calls.
+// The class must be thread safe
+class BlockAllocationListener final : public AllocationListener {
+ public:
+  BlockAllocationListener(AllocationListener* delegated, int64_t blockSize)
+      : delegated_(delegated), blockSize_(blockSize) {}
+
+  void allocationChanged(int64_t diff) override {
+    if (diff == 0) {
+      return;
+    }
+    int64_t granted = reserve(diff);
+    if (granted == 0) {
+      return;
+    }
+    delegated_->allocationChanged(granted);
+  }
+
+  int64_t currentBytes() override {
+    return reservationBytes_;
+  }
+
+  int64_t peakBytes() override {
+    return peakBytes_;
+  }
+
+ private:
+  inline int64_t reserve(int64_t diff) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    usedBytes_ += diff;
+    int64_t newBlockCount;
+    if (usedBytes_ == 0) {
+      newBlockCount = 0;
+    } else {
+      // ceil to get the required block number
+      newBlockCount = (usedBytes_ - 1) / blockSize_ + 1;
+    }
+    int64_t bytesGranted = (newBlockCount - blocksReserved_) * blockSize_;
+    blocksReserved_ = newBlockCount;
+    peakBytes_ = std::max(peakBytes_, usedBytes_);
+    return bytesGranted;
+  }
+
+  AllocationListener* const delegated_;
+  const uint64_t blockSize_;
+  int64_t blocksReserved_{0L};
+  int64_t usedBytes_{0L};
+  int64_t peakBytes_{0L};
+  int64_t reservationBytes_{0L};
+
+  mutable std::mutex mutex_;
 };
 
 } // namespace gluten

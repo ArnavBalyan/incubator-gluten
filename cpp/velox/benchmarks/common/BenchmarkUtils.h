@@ -32,14 +32,19 @@
 #include "memory/VeloxColumnarBatch.h"
 #include "memory/VeloxMemoryManager.h"
 #include "shuffle/Options.h"
+#include "shuffle/ShuffleWriter.h"
+#include "utils/Exception.h"
 #include "utils/VeloxArrowUtils.h"
-#include "utils/exception.h"
 #include "velox/common/memory/Memory.h"
 
 DECLARE_int64(batch_size);
 DECLARE_int32(cpu);
 DECLARE_int32(threads);
 DECLARE_int32(iterations);
+
+namespace gluten {
+
+std::unordered_map<std::string, std::string> defaultConf();
 
 /// Initialize the Velox backend with default value.
 void initVeloxBackend();
@@ -84,21 +89,32 @@ bool checkPathExists(const std::string& filepath);
 void abortIfFileNotExists(const std::string& filepath);
 
 inline std::shared_ptr<gluten::ColumnarBatch> convertBatch(std::shared_ptr<gluten::ColumnarBatch> cb) {
-  if (cb->getType() != "velox") {
-    auto vp = facebook::velox::importFromArrowAsOwner(
-        *cb->exportArrowSchema(), *cb->exportArrowArray(), gluten::defaultLeafVeloxMemoryPool().get());
-    return std::make_shared<gluten::VeloxColumnarBatch>(std::dynamic_pointer_cast<facebook::velox::RowVector>(vp));
-  } else {
-    return cb;
-  }
+  return gluten::VeloxColumnarBatch::from(gluten::defaultLeafVeloxMemoryPool().get(), cb);
 }
 
 /// Return whether the data ends with suffix.
 bool endsWith(const std::string& data, const std::string& suffix);
 
-void setCpu(uint32_t cpuindex);
+void setCpu(uint32_t cpuIndex);
 
-arrow::Status
-setLocalDirsAndDataFileFromEnv(std::string& dataFile, std::vector<std::string>& localDirs, bool& isFromEnv);
+class BenchmarkAllocationListener final : public gluten::AllocationListener {
+ public:
+  BenchmarkAllocationListener(uint64_t limit) : limit_(limit) {}
 
-void cleanupShuffleOutput(const std::string& dataFile, const std::vector<std::string>& localDirs, bool isFromEnv);
+  void setIterator(gluten::ResultIterator* iterator) {
+    iterator_ = iterator;
+  }
+
+  void setShuffleWriter(gluten::ShuffleWriter* shuffleWriter) {
+    shuffleWriter_ = shuffleWriter;
+  }
+
+  void allocationChanged(int64_t diff) override;
+
+ private:
+  uint64_t usedBytes_{0L};
+  const uint64_t limit_{0L};
+  gluten::ResultIterator* iterator_{nullptr};
+  gluten::ShuffleWriter* shuffleWriter_{nullptr};
+};
+} // namespace gluten

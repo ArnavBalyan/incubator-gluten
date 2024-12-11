@@ -54,15 +54,22 @@ private class CHColumnarBatchSerializerInstance(
   extends SerializerInstance
   with Logging {
 
-  private lazy val compressionCodec =
-    GlutenShuffleUtils.getCompressionCodec(SparkEnv.get.conf).toUpperCase(Locale.ROOT)
+  private lazy val conf = SparkEnv.get.conf
+  private lazy val compressionCodec = GlutenShuffleUtils.getCompressionCodec(conf)
+  private lazy val capitalizedCompressionCodec = compressionCodec.toUpperCase(Locale.ROOT)
+  private lazy val compressionLevel =
+    GlutenShuffleUtils.getCompressionLevel(
+      conf,
+      compressionCodec,
+      GlutenConfig.getConf.columnarShuffleCodecBackend.orNull)
+
+  private val useColumnarShuffle: Boolean = GlutenConfig.getConf.isUseColumnarShuffleManager
 
   override def deserializeStream(in: InputStream): DeserializationStream = {
+    // Don't use GlutenConfig in this method. It will execute in non task Thread.
     new DeserializationStream {
-      private val reader: CHStreamReader = new CHStreamReader(
-        in,
-        GlutenConfig.getConf.isUseColumnarShuffleManager,
-        CHBackendSettings.useCustomizedShuffleCodec)
+      private val reader: CHStreamReader =
+        new CHStreamReader(in, useColumnarShuffle, CHBackendSettings.useCustomizedShuffleCodec)
       private var cb: ColumnarBatch = _
 
       private var numBatchesTotal: Long = _
@@ -91,7 +98,6 @@ private class CHColumnarBatchSerializerInstance(
         var nativeBlock = reader.next()
         while (nativeBlock.numRows() == 0) {
           if (nativeBlock.numColumns() == 0) {
-            nativeBlock.close()
             this.close()
             throw new EOFException
           }
@@ -136,7 +142,8 @@ private class CHColumnarBatchSerializerInstance(
         writeBuffer,
         dataSize,
         CHBackendSettings.useCustomizedShuffleCodec,
-        compressionCodec,
+        capitalizedCompressionCodec,
+        compressionLevel,
         CHBackendSettings.customizeBufferSize
       )
 

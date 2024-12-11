@@ -31,17 +31,18 @@
 #include <Interpreters/ActionsDAG.h>
 #include <Interpreters/ActionsVisitor.h>
 #include <Interpreters/ExpressionActions.h>
-#include <Parser/SerializedPlanParser.h>
 #include <Processors/Executors/PullingPipelineExecutor.h>
 #include <Processors/Formats/Impl/ArrowColumnToCHColumn.h>
 #include <Processors/Formats/Impl/ParquetBlockInputFormat.h>
 #include <QueryPipeline/QueryPipeline.h>
 #include <Storages/Parquet/ArrowUtils.h>
 #include <Storages/Parquet/VectorizedParquetRecordReader.h>
+#include <Storages/SubstraitSource/ParquetFormatFile.h>
 #include <gtest/gtest.h>
 #include <parquet/arrow/reader.h>
 #include <parquet/level_conversion.h>
 #include <tests/gluten_test_util.h>
+#include <Common/BlockTypeUtils.h>
 
 using namespace DB;
 
@@ -108,7 +109,7 @@ void readData(const String & path, const std::map<String, Field> & fields)
 
     InputFormatPtr format;
     if constexpr (std::is_same_v<InputFormat, DB::ParquetBlockInputFormat>)
-        format = std::make_shared<InputFormat>(in, header, settings, 1, 8192);
+        format = std::make_shared<InputFormat>(in, header, settings, 1, 1, 8192);
     else
         format = std::make_shared<InputFormat>(in, header, settings);
 
@@ -137,6 +138,32 @@ TEST(ParquetRead, ReadSchema)
 {
     readSchema("alltypes/alltypes_notnull.parquet");
     readSchema("alltypes/alltypes_null.parquet");
+}
+
+TEST(ParquetRead, VerifyPageindexReaderSupport)
+{
+    EXPECT_FALSE(local_engine::ParquetFormatFile::pageindex_reader_support(
+        toBlockRowType(local_engine::test::readParquetSchema(local_engine::test::data_file("alltypes/alltypes_notnull.parquet")))));
+    EXPECT_FALSE(local_engine::ParquetFormatFile::pageindex_reader_support(
+        toBlockRowType(local_engine::test::readParquetSchema(local_engine::test::data_file("alltypes/alltypes_null.parquet")))));
+
+
+    EXPECT_FALSE(local_engine::ParquetFormatFile::pageindex_reader_support(
+        toBlockRowType(local_engine::test::readParquetSchema(local_engine::test::data_file("array.parquet")))));
+    EXPECT_TRUE(local_engine::ParquetFormatFile::pageindex_reader_support(
+        toBlockRowType(local_engine::test::readParquetSchema(local_engine::test::data_file("date.parquet")))));
+    EXPECT_TRUE(local_engine::ParquetFormatFile::pageindex_reader_support(
+        toBlockRowType(local_engine::test::readParquetSchema(local_engine::test::data_file("datetime64.parquet")))));
+    EXPECT_TRUE(local_engine::ParquetFormatFile::pageindex_reader_support(
+        toBlockRowType(local_engine::test::readParquetSchema(local_engine::test::data_file("decimal.parquet")))));
+    EXPECT_TRUE(local_engine::ParquetFormatFile::pageindex_reader_support(
+        toBlockRowType(local_engine::test::readParquetSchema(local_engine::test::data_file("iris.parquet")))));
+    EXPECT_FALSE(local_engine::ParquetFormatFile::pageindex_reader_support(
+        toBlockRowType(local_engine::test::readParquetSchema(local_engine::test::data_file("map.parquet")))));
+    EXPECT_TRUE(local_engine::ParquetFormatFile::pageindex_reader_support(
+        toBlockRowType(local_engine::test::readParquetSchema(local_engine::test::data_file("sample.parquet")))));
+    EXPECT_FALSE(local_engine::ParquetFormatFile::pageindex_reader_support(
+        toBlockRowType(local_engine::test::readParquetSchema(local_engine::test::data_file("struct.parquet")))));
 }
 
 TEST(ParquetRead, ReadDataNotNull)
@@ -397,7 +424,7 @@ TEST(ParquetRead, LowLevelRead)
 TEST(ParquetRead, VectorizedColumnReader)
 {
     const std::string sample(local_engine::test::data_file("sample.parquet"));
-    Block blockHeader({{DOUBLE(), "b"}, {BIGINT(), "a"}});
+    Block blockHeader({{local_engine::DOUBLE(), "b"}, {local_engine::BIGINT(), "a"}});
     ReadBufferFromFile in(sample);
     const FormatSettings format_settings{};
     auto arrow_file = local_engine::test::asArrowFileForParquet(in, format_settings);

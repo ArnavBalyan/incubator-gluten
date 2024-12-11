@@ -18,8 +18,8 @@ package org.apache.spark.shuffle
 
 import org.apache.gluten.GlutenConfig
 import org.apache.gluten.backendsapi.clickhouse.CHBackendSettings
-import org.apache.gluten.memory.alloc.CHNativeMemoryAllocators
-import org.apache.gluten.memory.memtarget.{MemoryTarget, Spiller, Spillers}
+import org.apache.gluten.execution.ColumnarNativeIterator
+import org.apache.gluten.memory.CHThreadGroup
 import org.apache.gluten.vectorized._
 
 import org.apache.spark.SparkEnv
@@ -29,7 +29,6 @@ import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.util.{SparkDirectoryUtil, Utils}
 
 import java.io.IOException
-import java.util
 import java.util.{Locale, UUID}
 
 class CHColumnarShuffleWriter[K, V](
@@ -53,15 +52,15 @@ class CHColumnarShuffleWriter[K, V](
     .mkString(",")
   private val subDirsPerLocalDir = blockManager.diskBlockManager.subDirsPerLocalDir
   private val splitSize = GlutenConfig.getConf.maxBatchSize
-  private val customizedCompressCodec =
-    GlutenShuffleUtils.getCompressionCodec(conf).toUpperCase(Locale.ROOT)
-  private val preferSpill = GlutenConfig.getConf.chColumnarShufflePreferSpill
-  private val throwIfMemoryExceed = GlutenConfig.getConf.chColumnarThrowIfMemoryExceed
-  private val flushBlockBufferBeforeEvict =
-    GlutenConfig.getConf.chColumnarFlushBlockBufferBeforeEvict
+  private val compressionCodec = GlutenShuffleUtils.getCompressionCodec(conf)
+  private val capitalizedCompressionCodec = compressionCodec.toUpperCase(Locale.ROOT)
+  private val compressionLevel =
+    GlutenShuffleUtils.getCompressionLevel(
+      conf,
+      compressionCodec,
+      GlutenConfig.getConf.columnarShuffleCodecBackend.orNull)
   private val maxSortBufferSize = GlutenConfig.getConf.chColumnarMaxSortBufferSize
-  private val spillFirstlyBeforeStop = GlutenConfig.getConf.chColumnarSpillFirstlyBeforeStop
-  private val forceSortShuffle = GlutenConfig.getConf.chColumnarForceSortShuffle
+  private val forceMemorySortShuffle = GlutenConfig.getConf.chColumnarForceMemorySortShuffle
   private val spillThreshold = GlutenConfig.getConf.chColumnarShuffleSpillThreshold
   private val jniWrapper = new CHShuffleSplitterJniWrapper
   // Are we in the process of stopping? Because map tasks can call stop() with success = true
@@ -77,16 +76,79 @@ class CHColumnarShuffleWriter[K, V](
 
   private var rawPartitionLengths: Array[Long] = _
 
-  private var firstRecordBatch: Boolean = true
-
   @throws[IOException]
   override def write(records: Iterator[Product2[K, V]]): Unit = {
+    CHThreadGroup.registerNewThreadGroup()
     internalCHWrite(records)
   }
 
   private def internalCHWrite(records: Iterator[Product2[K, V]]): Unit = {
     val splitterJniWrapper: CHShuffleSplitterJniWrapper = jniWrapper
-    if (!records.hasNext) {
+
+    val dataTmp = Utils.tempFileWith(shuffleBlockResolver.getDataFile(dep.shuffleId, mapId))
+    // for fallback
+    val iter = new ColumnarNativeIterator(new java.util.Iterator[ColumnarBatch] {
+      override def hasNext: Boolean = {
+        val has_value = records.hasNext
+        has_value
+      }
+
+      override def next(): ColumnarBatch = {
+        val batch = records.next()._2.asInstanceOf[ColumnarBatch]
+        batch
+      }
+    })
+    if (nativeSplitter == 0) {
+      nativeSplitter = splitterJniWrapper.make(
+        iter,
+        dep.nativePartitioning,
+        dep.shuffleId,
+        mapId,
+        splitSize,
+        capitalizedCompressionCodec,
+        compressionLevel,
+        dataTmp.getAbsolutePath,
+        localDirs,
+        subDirsPerLocalDir,
+        spillThreshold,
+        CHBackendSettings.shuffleHashAlgorithm,
+        maxSortBufferSize,
+        forceMemorySortShuffle
+      )
+    }
+    splitResult = splitterJniWrapper.stop(nativeSplitter)
+    if (splitResult.getTotalRows > 0) {
+      dep.metrics("numInputRows").add(splitResult.getTotalRows)
+      dep.metrics("inputBatches").add(splitResult.getTotalBatches)
+      dep.metrics("splitTime").add(splitResult.getSplitTime)
+      dep.metrics("IOTime").add(splitResult.getDiskWriteTime)
+      dep.metrics("serializeTime").add(splitResult.getSerializationTime)
+      dep.metrics("spillTime").add(splitResult.getTotalSpillTime)
+      dep.metrics("compressTime").add(splitResult.getTotalCompressTime)
+      dep.metrics("computePidTime").add(splitResult.getTotalComputePidTime)
+      dep.metrics("bytesSpilled").add(splitResult.getTotalBytesSpilled)
+      dep.metrics("dataSize").add(splitResult.getTotalBytesWritten)
+      dep.metrics("shuffleWallTime").add(splitResult.getWallTime)
+      writeMetrics.incRecordsWritten(splitResult.getTotalRows)
+      writeMetrics.incBytesWritten(splitResult.getTotalBytesWritten)
+      writeMetrics.incWriteTime(splitResult.getTotalWriteTime + splitResult.getTotalSpillTime)
+      partitionLengths = splitResult.getPartitionLengths
+      rawPartitionLengths = splitResult.getRawPartitionLengths
+      CHColumnarShuffleWriter.setOutputMetrics(splitResult)
+      try {
+        shuffleBlockResolver.writeMetadataFileAndCommit(
+          dep.shuffleId,
+          mapId,
+          partitionLengths,
+          Array[Long](),
+          dataTmp)
+      } finally {
+        if (dataTmp.exists() && !dataTmp.delete()) {
+          logError(s"Error while deleting temp file ${dataTmp.getAbsolutePath}")
+        }
+      }
+      mapStatus = MapStatus(blockManager.shuffleServerId, partitionLengths, mapId)
+    } else {
       partitionLengths = new Array[Long](dep.partitioner.numPartitions)
       shuffleBlockResolver.writeMetadataFileAndCommit(
         dep.shuffleId,
@@ -95,92 +157,8 @@ class CHColumnarShuffleWriter[K, V](
         Array[Long](),
         null)
       mapStatus = MapStatus(blockManager.shuffleServerId, partitionLengths, mapId)
-      return
     }
-    val dataTmp = Utils.tempFileWith(shuffleBlockResolver.getDataFile(dep.shuffleId, mapId))
-    if (nativeSplitter == 0) {
-      nativeSplitter = splitterJniWrapper.make(
-        dep.nativePartitioning,
-        dep.shuffleId,
-        mapId,
-        splitSize,
-        customizedCompressCodec,
-        dataTmp.getAbsolutePath,
-        localDirs,
-        subDirsPerLocalDir,
-        preferSpill,
-        spillThreshold,
-        CHBackendSettings.shuffleHashAlgorithm,
-        throwIfMemoryExceed,
-        flushBlockBufferBeforeEvict,
-        maxSortBufferSize,
-        spillFirstlyBeforeStop,
-        forceSortShuffle
-      )
-      CHNativeMemoryAllocators.createSpillable(
-        "ShuffleWriter",
-        new Spiller() {
-          override def spill(self: MemoryTarget, size: Long): Long = {
-            if (nativeSplitter == 0) {
-              throw new IllegalStateException(
-                "Fatal: spill() called before a shuffle writer " +
-                  "is created. This behavior should be optimized by moving memory " +
-                  "allocations from make() to split()")
-            }
-            logInfo(s"Gluten shuffle writer: Trying to spill $size bytes of data")
-            val spilled = splitterJniWrapper.evict(nativeSplitter);
-            logInfo(s"Gluten shuffle writer: Spilled $spilled / $size bytes of data")
-            spilled
-          }
-
-          override def applicablePhases(): util.Set[Spiller.Phase] = Spillers.PHASE_SET_SPILL_ONLY
-        }
-      )
-    }
-    while (records.hasNext) {
-      val cb = records.next()._2.asInstanceOf[ColumnarBatch]
-      if (cb.numRows == 0 || cb.numCols == 0) {
-        logInfo(s"Skip ColumnarBatch of ${cb.numRows} rows, ${cb.numCols} cols")
-      } else {
-        firstRecordBatch = false
-        val col = cb.column(0).asInstanceOf[CHColumnVector]
-        val block = col.getBlockAddress
-        splitterJniWrapper
-          .split(nativeSplitter, block)
-        dep.metrics("numInputRows").add(cb.numRows)
-        dep.metrics("inputBatches").add(1)
-        writeMetrics.incRecordsWritten(cb.numRows)
-      }
-    }
-    splitResult = splitterJniWrapper.stop(nativeSplitter)
-
-    dep.metrics("splitTime").add(splitResult.getSplitTime)
-    dep.metrics("IOTime").add(splitResult.getDiskWriteTime)
-    dep.metrics("serializeTime").add(splitResult.getSerializationTime)
-    dep.metrics("spillTime").add(splitResult.getTotalSpillTime)
-    dep.metrics("compressTime").add(splitResult.getTotalCompressTime)
-    dep.metrics("computePidTime").add(splitResult.getTotalComputePidTime)
-    dep.metrics("bytesSpilled").add(splitResult.getTotalBytesSpilled)
-    dep.metrics("dataSize").add(splitResult.getTotalBytesWritten)
-    writeMetrics.incBytesWritten(splitResult.getTotalBytesWritten)
-    writeMetrics.incWriteTime(splitResult.getTotalWriteTime + splitResult.getTotalSpillTime)
-
-    partitionLengths = splitResult.getPartitionLengths
-    rawPartitionLengths = splitResult.getRawPartitionLengths
-    try {
-      shuffleBlockResolver.writeMetadataFileAndCommit(
-        dep.shuffleId,
-        mapId,
-        partitionLengths,
-        Array[Long](),
-        dataTmp)
-    } finally {
-      if (dataTmp.exists() && !dataTmp.delete()) {
-        logError(s"Error while deleting temp file ${dataTmp.getAbsolutePath}")
-      }
-    }
-
-    mapStatus = MapStatus(blockManager.shuffleServerId, partitionLengths, mapId)
+    closeCHSplitter()
   }
 
   override def stop(success: Boolean): Option[MapStatus] = {
@@ -195,18 +173,46 @@ class CHColumnarShuffleWriter[K, V](
         None
       }
     } finally {
-      if (nativeSplitter != 0) {
-        closeCHSplitter()
-        nativeSplitter = 0
-      }
+      closeCHSplitter()
     }
   }
 
   private def closeCHSplitter(): Unit = {
-    jniWrapper.close(nativeSplitter)
+    if (nativeSplitter != 0) {
+      jniWrapper.close(nativeSplitter)
+      nativeSplitter = 0
+    }
   }
 
   // VisibleForTesting
-  def getPartitionLengths: Array[Long] = partitionLengths
+  def getPartitionLengths(): Array[Long] = partitionLengths
 
+}
+
+case class OutputMetrics(totalRows: Long, totalBatches: Long)
+
+object CHColumnarShuffleWriter {
+
+  private var metric = new ThreadLocal[OutputMetrics]()
+
+  // Pass the statistics of the last operator before shuffle to CollectMetricIterator.
+  def setOutputMetrics(splitResult: CHSplitResult): Unit = {
+    metric.set(OutputMetrics(splitResult.getTotalRows, splitResult.getTotalBatches))
+  }
+
+  def getTotalOutputRows: Long = {
+    if (metric.get() == null) {
+      0
+    } else {
+      metric.get().totalRows
+    }
+  }
+
+  def getTotalOutputBatches: Long = {
+    if (metric.get() == null) {
+      0
+    } else {
+      metric.get().totalBatches
+    }
+  }
 }

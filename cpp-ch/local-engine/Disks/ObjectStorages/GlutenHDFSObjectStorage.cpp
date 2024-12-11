@@ -17,7 +17,7 @@
 
 #include "GlutenHDFSObjectStorage.h"
 #if USE_HDFS
-#include <Storages/HDFS/ReadBufferFromHDFS.h>
+#include <Storages/ObjectStorage/HDFS/ReadBufferFromHDFS.h>
 using namespace DB;
 namespace local_engine
 {
@@ -30,13 +30,15 @@ std::unique_ptr<ReadBufferFromFileBase> GlutenHDFSObjectStorage::readObject( ///
     size_t begin_of_path = object.remote_path.find('/', object.remote_path.find("//") + 2);
     auto hdfs_path = object.remote_path.substr(begin_of_path);
     auto hdfs_uri = object.remote_path.substr(0, begin_of_path);
-    return std::make_unique<ReadBufferFromHDFS>(hdfs_uri, hdfs_path, config, HDFSObjectStorage::patchSettings(read_settings));
+    return std::make_unique<ReadBufferFromHDFS>(hdfs_uri, hdfs_path, config, HDFSObjectStorage::patchSettings(read_settings), 0, true);
 }
 
-DB::ObjectStorageKey local_engine::GlutenHDFSObjectStorage::generateObjectKeyForPath(const std::string & path) const
+DB::ObjectStorageKey local_engine::GlutenHDFSObjectStorage::generateObjectKeyForPath(const std::string & path, const std::optional<std::string> & key_prefix) const
 {
-    return DB::ObjectStorageKey::createAsAbsolute(hdfs_root_path + path);
+    initializeHDFSFS();
+    /// what ever data_source_description.description value is, consider that key as relative key
+    chassert(data_directory.starts_with("/"));
+    return ObjectStorageKey::createAsRelative(fs::path(url_without_path) / data_directory.substr(1), path);
 }
 }
 #endif
-

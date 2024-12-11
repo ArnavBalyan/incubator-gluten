@@ -24,7 +24,7 @@
 #include <unordered_map>
 
 #include "config/GlutenConfig.h"
-#include "velox/core/Config.h"
+#include "velox/common/config/Config.h"
 
 namespace gluten {
 
@@ -33,7 +33,7 @@ std::string getConfigValue(
     const std::string& key,
     const std::optional<std::string>& fallbackValue);
 
-std::shared_ptr<facebook::velox::core::MemConfigMutable> getHiveConfig(
-    const std::shared_ptr<const facebook::velox::Config>& conf);
+std::shared_ptr<facebook::velox::config::ConfigBase> getHiveConfig(
+    std::shared_ptr<facebook::velox::config::ConfigBase> conf);
 
 } // namespace gluten

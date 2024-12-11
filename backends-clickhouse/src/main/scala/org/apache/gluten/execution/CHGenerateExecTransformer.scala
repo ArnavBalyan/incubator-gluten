@@ -54,7 +54,7 @@ case class CHGenerateExecTransformer(
       "extraTime" -> SQLMetrics.createTimingMetric(sparkContext, "extra operators time"),
       "inputWaitTime" -> SQLMetrics.createTimingMetric(sparkContext, "time of waiting for data"),
       "outputWaitTime" -> SQLMetrics.createTimingMetric(sparkContext, "time of waiting for output"),
-      "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "total time")
+      "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "time")
     )
 
   override def metricsUpdater(): MetricsUpdater = new GenerateMetricsUpdater(metrics)
@@ -64,7 +64,7 @@ case class CHGenerateExecTransformer(
   override protected def doGeneratorValidate(
       generator: Generator,
       outer: Boolean): ValidationResult =
-    ValidationResult.ok
+    ValidationResult.succeeded
 
   override protected def getRelNode(
       context: SubstraitContext,
@@ -76,6 +76,7 @@ case class CHGenerateExecTransformer(
         inputRel,
         generatorNode,
         requiredChildOutputNodes.asJava,
+        outer,
         context,
         context.nextOperatorId(this.nodeName))
     } else {
@@ -84,6 +85,7 @@ case class CHGenerateExecTransformer(
         generatorNode,
         requiredChildOutputNodes.asJava,
         getExtensionNodeForValidation,
+        outer,
         context,
         context.nextOperatorId(this.nodeName))
     }

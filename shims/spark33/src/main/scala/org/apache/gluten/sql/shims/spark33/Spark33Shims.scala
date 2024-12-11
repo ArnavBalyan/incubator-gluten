@@ -16,7 +16,7 @@
  */
 package org.apache.gluten.sql.shims.spark33
 
-import org.apache.gluten.execution.datasource.GlutenParquetWriterInjects
+import org.apache.gluten.execution.datasource.GlutenFormatFactory
 import org.apache.gluten.expression.{ExpressionNames, Sig}
 import org.apache.gluten.expression.ExpressionNames.{CEIL, FLOOR, KNOWN_NULLABLE, TIMESTAMP_ADD}
 import org.apache.gluten.sql.shims.{ShimDescriptor, SparkShims}
@@ -27,29 +27,37 @@ import org.apache.spark.shuffle.ShuffleHandle
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.catalog.BucketSpec
+import org.apache.spark.sql.catalyst.csv.CSVOptions
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.{BloomFilterAggregate, RegrR2, TypedImperativeAggregate}
+import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.plans.physical.{ClusteredDistribution, Distribution}
 import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.catalyst.util.RebaseDateTime.RebaseSpec
 import org.apache.spark.sql.catalyst.util.TimestampFormatter
 import org.apache.spark.sql.connector.catalog.Table
 import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.execution.{FileSourceScanExec, PartitionedFileUtil, SparkPlan}
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.execution.datasources.FileFormatWriter.Empty2Null
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFilters
 import org.apache.spark.sql.execution.datasources.v2.BatchScanExec
 import org.apache.spark.sql.execution.datasources.v2.text.TextScan
 import org.apache.spark.sql.execution.datasources.v2.utils.CatalogUtil
 import org.apache.spark.sql.execution.exchange.BroadcastExchangeLike
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.internal.SQLConf.LegacyBehaviorPolicy
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.storage.{BlockId, BlockManagerId}
 
 import org.apache.hadoop.fs.{FileStatus, Path}
+import org.apache.parquet.schema.MessageType
 
 import java.time.ZoneOffset
-import java.util.{HashMap => JHashMap, Map => JMap}
+import java.util.{HashMap => JHashMap, Map => JMap, Properties}
 
 class Spark33Shims extends SparkShims {
   override def getShimDescriptor: ShimDescriptor = SparkShimProvider.DESCRIPTOR
@@ -109,7 +117,7 @@ class Spark33Shims extends SparkShims {
       options: CaseInsensitiveStringMap,
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): TextScan = {
-    new TextScan(
+    TextScan(
       sparkSession,
       fileIndex,
       dataSchema,
@@ -200,11 +208,16 @@ class Spark33Shims extends SparkShims {
     case other => other
   }
 
+  override def getFileSizeAndModificationTime(
+      file: PartitionedFile): (Option[Long], Option[Long]) = {
+    (Some(file.fileSize), Some(file.modificationTime))
+  }
+
   override def generateMetadataColumns(
       file: PartitionedFile,
       metadataColumnNames: Seq[String]): JMap[String, String] = {
     val metadataColumn = new JHashMap[String, String]()
-    val path = new Path(file.filePath.toString)
+    val path = new Path(file.filePath)
     for (columnName <- metadataColumnNames) {
       columnName match {
         case FileFormat.FILE_PATH => metadataColumn.put(FileFormat.FILE_PATH, path.toString)
@@ -219,6 +232,9 @@ class Spark33Shims extends SparkShims {
         case _ =>
       }
     }
+    metadataColumn.put(InputFileName().prettyName, file.filePath)
+    metadataColumn.put(InputFileBlockStart().prettyName, file.start.toString)
+    metadataColumn.put(InputFileBlockLength().prettyName, file.length.toString)
     metadataColumn
   }
 
@@ -230,11 +246,11 @@ class Spark33Shims extends SparkShims {
   }
 
   override def getExtendedColumnarPostRules(): List[SparkSession => Rule[SparkPlan]] = {
-    List(session => GlutenParquetWriterInjects.getInstance().getExtendedColumnarPostRule(session))
+    List(session => GlutenFormatFactory.getExtendedColumnarPostRule(session))
   }
 
-  override def createTestTaskContext(): TaskContext = {
-    TaskContextUtils.createTestTaskContext()
+  override def createTestTaskContext(properties: Properties): TaskContext = {
+    TaskContextUtils.createTestTaskContext(properties)
   }
 
   def setJobDescriptionOrTagForBroadcastExchange(
@@ -258,8 +274,7 @@ class Spark33Shims extends SparkShims {
       startMapIndex: Int,
       endMapIndex: Int,
       startPartition: Int,
-      endPartition: Int)
-      : Tuple2[Iterator[(BlockManagerId, collection.Seq[(BlockId, Long, Int)])], Boolean] = {
+      endPartition: Int): Tuple2[Iterator[(BlockManagerId, Seq[(BlockId, Long, Int)])], Boolean] = {
     ShuffleUtils.getReaderParam(handle, startMapIndex, endMapIndex, startPartition, endPartition)
   }
 
@@ -270,6 +285,15 @@ class Spark33Shims extends SparkShims {
   override def supportDuplicateReadingTracking: Boolean = true
 
   def getFileStatus(partition: PartitionDirectory): Seq[FileStatus] = partition.files
+
+  def isFileSplittable(
+      relation: HadoopFsRelation,
+      filePath: Path,
+      sparkSchema: StructType): Boolean = true
+
+  def isRowIndexMetadataColumn(name: String): Boolean = false
+
+  def findRowIndexColumnIndexInSchema(sparkSchema: StructType): Int = -1
 
   def splitFiles(
       sparkSession: SparkSession,
@@ -316,4 +340,41 @@ class Spark33Shims extends SparkShims {
   }
 
   override def supportsRowBased(plan: SparkPlan): Boolean = plan.supportsRowBased
+
+  override def dateTimestampFormatInReadIsDefaultValue(
+      csvOptions: CSVOptions,
+      timeZone: String): Boolean = {
+    val default = new CSVOptions(CaseInsensitiveMap(Map()), csvOptions.columnPruning, timeZone)
+    csvOptions.dateFormatInRead == default.dateFormatInRead &&
+    csvOptions.timestampFormatInRead == default.timestampFormatInRead &&
+    csvOptions.timestampNTZFormatInRead == default.timestampNTZFormatInRead
+  }
+
+  override def createParquetFilters(
+      conf: SQLConf,
+      schema: MessageType,
+      caseSensitive: Option[Boolean] = None): ParquetFilters = {
+    new ParquetFilters(
+      schema,
+      conf.parquetFilterPushDownDate,
+      conf.parquetFilterPushDownTimestamp,
+      conf.parquetFilterPushDownDecimal,
+      conf.parquetFilterPushDownStringStartWith,
+      conf.parquetFilterPushDownInFilterThreshold,
+      caseSensitive.getOrElse(conf.caseSensitiveAnalysis),
+      RebaseSpec(LegacyBehaviorPolicy.CORRECTED)
+    )
+  }
+
+  override def getOperatorId(plan: QueryPlan[_]): Option[Int] = {
+    plan.getTagValue(QueryPlan.OP_ID_TAG)
+  }
+
+  override def setOperatorId(plan: QueryPlan[_], opId: Int): Unit = {
+    plan.setTagValue(QueryPlan.OP_ID_TAG, opId)
+  }
+
+  override def unsetOperatorId(plan: QueryPlan[_]): Unit = {
+    plan.unsetTagValue(QueryPlan.OP_ID_TAG)
+  }
 }

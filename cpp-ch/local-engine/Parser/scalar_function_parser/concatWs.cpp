@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 #include <Parser/FunctionParser.h>
-#include <Common/CHUtil.h>
+
 #include <Core/Field.h>
 #include <DataTypes/DataTypeNullable.h>
 #include <DataTypes/IDataType.h>
@@ -36,22 +36,23 @@ namespace local_engine
 class FunctionParserConcatWS : public FunctionParser
 {
 public:
-    explicit FunctionParserConcatWS(SerializedPlanParser * plan_parser_) : FunctionParser(plan_parser_) {}
+    explicit FunctionParserConcatWS(ParserContextPtr parser_context_) : FunctionParser(parser_context_) {}
     ~FunctionParserConcatWS() override = default;
 
     static constexpr auto name = "concat_ws";
 
     String getName() const override { return name; }
+    String getCHFunctionName(const substrait::Expression_ScalarFunction &) const override { return name; }
 
     const ActionsDAG::Node * parse(
         const substrait::Expression_ScalarFunction & substrait_func,
-        ActionsDAGPtr & actions_dag) const override
+        ActionsDAG & actions_dag) const override
     {
         /*
             parse concat_ws(sep, s1, s2, arr1, arr2, ...)) as
             arrayStringConcat(arrayFlatten(array(s1), array(s2), arr1, arr2, ...), sep)
         */
-        auto parsed_args = parseFunctionArguments(substrait_func, "", actions_dag);
+        auto parsed_args = parseFunctionArguments(substrait_func, actions_dag);
         if (parsed_args.empty())
             throw Exception(ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH, "Function {} requires at least one argument", getName());
 

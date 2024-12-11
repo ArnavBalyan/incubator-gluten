@@ -17,13 +17,14 @@
 package org.apache.gluten.backendsapi.clickhouse
 
 import org.apache.gluten.backendsapi.MetricsApi
+import org.apache.gluten.logging.LogLevelUtil
 import org.apache.gluten.metrics._
 import org.apache.gluten.substrait.{AggregationParams, JoinParams}
-import org.apache.gluten.utils.LogLevelUtil
 
 import org.apache.spark.SparkContext
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.{ColumnarInputAdapter, SparkPlan}
+import org.apache.spark.sql.execution.adaptive.QueryStageExec
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 
 import java.lang.{Long => JLong}
@@ -39,21 +40,40 @@ class CHMetricsApi extends MetricsApi with Logging with LogLevelUtil {
   }
 
   override def genInputIteratorTransformerMetrics(
-      sparkContext: SparkContext): Map[String, SQLMetric] = {
+      child: SparkPlan,
+      sparkContext: SparkContext,
+      forBroadcast: Boolean): Map[String, SQLMetric] = {
+    def metricsPlan(plan: SparkPlan): SparkPlan = {
+      plan match {
+        case ColumnarInputAdapter(child) => metricsPlan(child)
+        case q: QueryStageExec => metricsPlan(q.plan)
+        case _ => plan
+      }
+    }
+
+    val outputMetrics = if (forBroadcast) {
+      metricsPlan(child).metrics
+        .filterKeys(key => key.equals("numOutputRows"))
+    } else {
+      Map(
+        "numOutputRows" -> SQLMetrics.createMetric(sparkContext, "number of output rows")
+      )
+    }
+
     Map(
       "iterReadTime" -> SQLMetrics.createTimingMetric(
         sparkContext,
         "time of reading from iterator"),
       "numInputRows" -> SQLMetrics.createMetric(sparkContext, "number of input rows"),
-      "numOutputRows" -> SQLMetrics.createMetric(sparkContext, "number of output rows"),
       "fillingRightJoinSideTime" -> SQLMetrics.createTimingMetric(
         sparkContext,
         "filling right join side time")
-    )
+    ) ++ outputMetrics
   }
 
   override def genInputIteratorTransformerMetricsUpdater(
-      metrics: Map[String, SQLMetric]): MetricsUpdater = {
+      metrics: Map[String, SQLMetric],
+      forBroadcast: Boolean): MetricsUpdater = {
     InputIteratorMetricsUpdater(metrics)
   }
 
@@ -128,7 +148,25 @@ class CHMetricsApi extends MetricsApi with Logging with LogLevelUtil {
       "extraTime" -> SQLMetrics.createTimingMetric(sparkContext, "extra operators time"),
       "selectedMarksPk" -> SQLMetrics.createMetric(sparkContext, "selected marks primary"),
       "selectedMarks" -> SQLMetrics.createMetric(sparkContext, "selected marks"),
-      "totalMarksPk" -> SQLMetrics.createMetric(sparkContext, "total marks primary")
+      "totalMarksPk" -> SQLMetrics.createMetric(sparkContext, "total marks primary"),
+      "readCacheHits" -> SQLMetrics.createMetric(
+        sparkContext,
+        "Number of times the read from filesystem cache hit the cache"),
+      "missCacheHits" -> SQLMetrics.createMetric(
+        sparkContext,
+        "Number of times the read from filesystem cache miss the cache"),
+      "readCacheBytes" -> SQLMetrics.createSizeMetric(
+        sparkContext,
+        "Bytes read from filesystem cache"),
+      "readMissBytes" -> SQLMetrics.createSizeMetric(
+        sparkContext,
+        "Bytes read from filesystem cache source (from remote fs, etc)"),
+      "readCacheMillisecond" -> SQLMetrics.createTimingMetric(
+        sparkContext,
+        "Time reading from filesystem cache"),
+      "missCacheMillisecond" -> SQLMetrics.createTimingMetric(
+        sparkContext,
+        "Time reading from filesystem cache source (from remote filesystem, etc)")
     )
 
   override def genFileSourceScanTransformerMetricsUpdater(
@@ -144,10 +182,12 @@ class CHMetricsApi extends MetricsApi with Logging with LogLevelUtil {
       "extraTime" -> SQLMetrics.createTimingMetric(sparkContext, "extra operators time"),
       "inputWaitTime" -> SQLMetrics.createTimingMetric(sparkContext, "time of waiting for data"),
       "outputWaitTime" -> SQLMetrics.createTimingMetric(sparkContext, "time of waiting for output"),
-      "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "total time")
+      "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "time")
     )
 
-  override def genFilterTransformerMetricsUpdater(metrics: Map[String, SQLMetric]): MetricsUpdater =
+  override def genFilterTransformerMetricsUpdater(
+      metrics: Map[String, SQLMetric],
+      extraMetrics: Seq[(String, SQLMetric)] = Seq.empty): MetricsUpdater =
     new FilterMetricsUpdater(metrics)
 
   override def genProjectTransformerMetrics(sparkContext: SparkContext): Map[String, SQLMetric] =
@@ -160,11 +200,13 @@ class CHMetricsApi extends MetricsApi with Logging with LogLevelUtil {
       "extraTime" -> SQLMetrics.createTimingMetric(sparkContext, "extra operators time"),
       "inputWaitTime" -> SQLMetrics.createTimingMetric(sparkContext, "time of waiting for data"),
       "outputWaitTime" -> SQLMetrics.createTimingMetric(sparkContext, "time of waiting for output"),
-      "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "total time")
+      "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "time")
     )
 
   override def genProjectTransformerMetricsUpdater(
-      metrics: Map[String, SQLMetric]): MetricsUpdater = new ProjectMetricsUpdater(metrics)
+      metrics: Map[String, SQLMetric],
+      extraMetrics: Seq[(String, SQLMetric)] = Seq.empty): MetricsUpdater =
+    new ProjectMetricsUpdater(metrics)
 
   override def genHashAggregateTransformerMetrics(
       sparkContext: SparkContext): Map[String, SQLMetric] =
@@ -181,7 +223,7 @@ class CHMetricsApi extends MetricsApi with Logging with LogLevelUtil {
       "resizeOutputRows" -> SQLMetrics.createMetric(sparkContext, "number of resize output rows"),
       "aggregatingTime" ->
         SQLMetrics.createTimingMetric(sparkContext, "time of aggregating"),
-      "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "total time")
+      "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "time")
     )
 
   override def genHashAggregateTransformerMetricsUpdater(
@@ -198,7 +240,7 @@ class CHMetricsApi extends MetricsApi with Logging with LogLevelUtil {
       "extraTime" -> SQLMetrics.createTimingMetric(sparkContext, "extra operators time"),
       "inputWaitTime" -> SQLMetrics.createTimingMetric(sparkContext, "time of waiting for data"),
       "outputWaitTime" -> SQLMetrics.createTimingMetric(sparkContext, "time of waiting for output"),
-      "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "total time")
+      "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "time")
     )
 
   override def genExpandTransformerMetricsUpdater(metrics: Map[String, SQLMetric]): MetricsUpdater =
@@ -208,21 +250,21 @@ class CHMetricsApi extends MetricsApi with Logging with LogLevelUtil {
     Map("numOutputRows" -> SQLMetrics.createMetric(sparkContext, "number of output rows"))
 
   override def genColumnarShuffleExchangeMetrics(
-      sparkContext: SparkContext): Map[String, SQLMetric] =
+      sparkContext: SparkContext,
+      isSort: Boolean): Map[String, SQLMetric] =
     Map(
       "dataSize" -> SQLMetrics.createSizeMetric(sparkContext, "data size"),
       "bytesSpilled" -> SQLMetrics.createSizeMetric(sparkContext, "shuffle bytes spilled"),
-      "computePidTime" -> SQLMetrics.createNanoTimingMetric(
-        sparkContext,
-        "totaltime to compute pid"),
-      "splitTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime to split"),
-      "IOTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime to disk io"),
+      "computePidTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "time to compute pid"),
+      "splitTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "time to split"),
+      "IOTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "time to disk io"),
       "serializeTime" -> SQLMetrics.createNanoTimingMetric(
         sparkContext,
-        "totaltime to block serialization"),
-      "spillTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime to spill"),
-      "compressTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime to compress"),
-      "prepareTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime to prepare"),
+        "time to block serialization"),
+      "spillTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "time to spill"),
+      "compressTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "time to compress"),
+      "prepareTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "time to prepare"),
+      "shuffleWallTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "shuffle wall time"),
       "avgReadBatchNumRows" -> SQLMetrics
         .createAverageMetric(sparkContext, "avg read batch num rows"),
       "numInputRows" -> SQLMetrics.createMetric(sparkContext, "number of input rows"),
@@ -244,7 +286,7 @@ class CHMetricsApi extends MetricsApi with Logging with LogLevelUtil {
       "extraTime" -> SQLMetrics.createTimingMetric(sparkContext, "extra operators time"),
       "inputWaitTime" -> SQLMetrics.createTimingMetric(sparkContext, "time of waiting for data"),
       "outputWaitTime" -> SQLMetrics.createTimingMetric(sparkContext, "time of waiting for output"),
-      "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "total time")
+      "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "time")
     )
 
   override def genWindowTransformerMetricsUpdater(metrics: Map[String, SQLMetric]): MetricsUpdater =
@@ -261,7 +303,7 @@ class CHMetricsApi extends MetricsApi with Logging with LogLevelUtil {
     Map(
       "numInputRows" -> SQLMetrics.createMetric(sparkContext, "number of input rows"),
       "numOutputBatches" -> SQLMetrics.createMetric(sparkContext, "number of output batches"),
-      "convertTime" -> SQLMetrics.createTimingMetric(sparkContext, "total time to convert")
+      "convertTime" -> SQLMetrics.createTimingMetric(sparkContext, "time to convert")
     )
 
   override def genLimitTransformerMetrics(sparkContext: SparkContext): Map[String, SQLMetric] =
@@ -274,7 +316,7 @@ class CHMetricsApi extends MetricsApi with Logging with LogLevelUtil {
       "extraTime" -> SQLMetrics.createTimingMetric(sparkContext, "extra operators time"),
       "inputWaitTime" -> SQLMetrics.createTimingMetric(sparkContext, "time of waiting for data"),
       "outputWaitTime" -> SQLMetrics.createTimingMetric(sparkContext, "time of waiting for output"),
-      "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "total time")
+      "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "time")
     )
 
   override def genLimitTransformerMetricsUpdater(metrics: Map[String, SQLMetric]): MetricsUpdater =
@@ -290,7 +332,7 @@ class CHMetricsApi extends MetricsApi with Logging with LogLevelUtil {
       "extraTime" -> SQLMetrics.createTimingMetric(sparkContext, "extra operators time"),
       "inputWaitTime" -> SQLMetrics.createTimingMetric(sparkContext, "time of waiting for data"),
       "outputWaitTime" -> SQLMetrics.createTimingMetric(sparkContext, "time of waiting for output"),
-      "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "total time")
+      "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "time")
     )
 
   override def genSortTransformerMetricsUpdater(metrics: Map[String, SQLMetric]): MetricsUpdater =
@@ -298,7 +340,31 @@ class CHMetricsApi extends MetricsApi with Logging with LogLevelUtil {
 
   override def genSortMergeJoinTransformerMetrics(
       sparkContext: SparkContext): Map[String, SQLMetric] =
-    Map.empty
+    Map(
+      "numOutputRows" -> SQLMetrics.createMetric(sparkContext, "number of output rows"),
+      "outputVectors" -> SQLMetrics.createMetric(sparkContext, "number of output vectors"),
+      "numOutputRows" -> SQLMetrics.createMetric(sparkContext, "number of output rows"),
+      "outputVectors" -> SQLMetrics.createMetric(sparkContext, "number of output vectors"),
+      "outputBytes" -> SQLMetrics.createSizeMetric(sparkContext, "number of output bytes"),
+      "numInputRows" -> SQLMetrics.createMetric(sparkContext, "number of input rows"),
+      "inputBytes" -> SQLMetrics.createSizeMetric(sparkContext, "number of input bytes"),
+      "extraTime" -> SQLMetrics.createTimingMetric(sparkContext, "extra operators time"),
+      "inputWaitTime" -> SQLMetrics.createTimingMetric(sparkContext, "time of waiting for data"),
+      "outputWaitTime" -> SQLMetrics.createTimingMetric(sparkContext, "time of waiting for output"),
+      "streamPreProjectionTime" ->
+        SQLMetrics.createTimingMetric(sparkContext, "time of stream side preProjection"),
+      "buildPreProjectionTime" ->
+        SQLMetrics.createTimingMetric(sparkContext, "time of build side preProjection"),
+      "postProjectTime" ->
+        SQLMetrics.createTimingMetric(sparkContext, "time of postProjection"),
+      "probeTime" ->
+        SQLMetrics.createTimingMetric(sparkContext, "time of probe"),
+      "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "time"),
+      "fillingRightJoinSideTime" -> SQLMetrics.createTimingMetric(
+        sparkContext,
+        "filling right join side time"),
+      "conditionTime" -> SQLMetrics.createTimingMetric(sparkContext, "join condition time")
+    )
 
   override def genSortMergeJoinTransformerMetricsUpdater(
       metrics: Map[String, SQLMetric]): MetricsUpdater = new SortMergeJoinMetricsUpdater(metrics)
@@ -338,7 +404,7 @@ class CHMetricsApi extends MetricsApi with Logging with LogLevelUtil {
         SQLMetrics.createTimingMetric(sparkContext, "time of postProjection"),
       "probeTime" ->
         SQLMetrics.createTimingMetric(sparkContext, "time of probe"),
-      "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "total time"),
+      "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "time"),
       "fillingRightJoinSideTime" -> SQLMetrics.createTimingMetric(
         sparkContext,
         "filling right join side time"),
@@ -349,24 +415,56 @@ class CHMetricsApi extends MetricsApi with Logging with LogLevelUtil {
       metrics: Map[String, SQLMetric]): MetricsUpdater = new HashJoinMetricsUpdater(metrics)
 
   override def genNestedLoopJoinTransformerMetrics(
-      sparkContext: SparkContext): Map[String, SQLMetric] = {
-    throw new UnsupportedOperationException(
-      s"NestedLoopJoinTransformer metrics update is not supported in CH backend")
-  }
+      sparkContext: SparkContext): Map[String, SQLMetric] = Map(
+    "numOutputRows" -> SQLMetrics.createMetric(sparkContext, "number of output rows"),
+    "outputVectors" -> SQLMetrics.createMetric(sparkContext, "number of output vectors"),
+    "outputBytes" -> SQLMetrics.createSizeMetric(sparkContext, "number of output bytes"),
+    "numInputRows" -> SQLMetrics.createMetric(sparkContext, "number of input rows"),
+    "inputBytes" -> SQLMetrics.createSizeMetric(sparkContext, "number of input bytes"),
+    "extraTime" -> SQLMetrics.createTimingMetric(sparkContext, "extra operators time"),
+    "inputWaitTime" -> SQLMetrics.createTimingMetric(sparkContext, "time of waiting for data"),
+    "outputWaitTime" -> SQLMetrics.createTimingMetric(sparkContext, "time of waiting for output"),
+    "postProjectTime" ->
+      SQLMetrics.createTimingMetric(sparkContext, "time of postProjection"),
+    "probeTime" ->
+      SQLMetrics.createTimingMetric(sparkContext, "time of probe"),
+    "totalTime" -> SQLMetrics.createTimingMetric(sparkContext, "time"),
+    "fillingRightJoinSideTime" -> SQLMetrics.createTimingMetric(
+      sparkContext,
+      "filling right join side time"),
+    "conditionTime" -> SQLMetrics.createTimingMetric(sparkContext, "join condition time")
+  )
 
   override def genNestedLoopJoinTransformerMetricsUpdater(
+      metrics: Map[String, SQLMetric]): MetricsUpdater = new BroadcastNestedLoopJoinMetricsUpdater(
+    metrics)
+
+  override def genSampleTransformerMetrics(sparkContext: SparkContext): Map[String, SQLMetric] = {
+    throw new UnsupportedOperationException(
+      s"SampleTransformer metrics update is not supported in CH backend")
+  }
+
+  override def genSampleTransformerMetricsUpdater(
       metrics: Map[String, SQLMetric]): MetricsUpdater = {
     throw new UnsupportedOperationException(
-      s"NestedLoopJoinTransformer metrics update is not supported in CH backend")
+      s"SampleTransformer metrics update is not supported in CH backend")
   }
 
-  def genWriteFilesTransformerMetrics(sparkContext: SparkContext): Map[String, SQLMetric] = {
+  override def genUnionTransformerMetrics(sparkContext: SparkContext): Map[String, SQLMetric] =
     throw new UnsupportedOperationException(
-      s"WriteFilesTransformer metrics update is not supported in CH backend")
-  }
+      "UnionExecTransformer metrics update is not supported in CH backend")
+
+  override def genUnionTransformerMetricsUpdater(metrics: Map[String, SQLMetric]): MetricsUpdater =
+    throw new UnsupportedOperationException(
+      "UnionExecTransformer metrics update is not supported in CH backend")
+
+  def genWriteFilesTransformerMetrics(sparkContext: SparkContext): Map[String, SQLMetric] =
+    Map(
+      "physicalWrittenBytes" -> SQLMetrics.createMetric(sparkContext, "number of written bytes"),
+      "numWrittenFiles" -> SQLMetrics.createMetric(sparkContext, "number of written files")
+    )
 
   def genWriteFilesTransformerMetricsUpdater(metrics: Map[String, SQLMetric]): MetricsUpdater = {
-    throw new UnsupportedOperationException(
-      s"WriteFilesTransformer metrics update is not supported in CH backend")
+    new WriteFilesMetricsUpdater(metrics)
   }
 }

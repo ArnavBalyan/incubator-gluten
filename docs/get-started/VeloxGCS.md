@@ -24,7 +24,7 @@ After these steps, no specific configuration is required for Gluten, since the a
 For workloads that need to be fully automated, manually authorizing can be problematic. For such cases it is better to use a json file with the credentials.
 This is described in the [instructions to configure a service account]https://cloud.google.com/sdk/docs/authorizing#service-account.
 
-Such json file with the credetials can be passed to Gluten:
+Such json file with the credentials can be passed to Gluten:
 
 ```sh
 spark.hadoop.fs.gs.auth.type                         SERVICE_ACCOUNT_JSON_KEYFILE
@@ -36,4 +36,18 @@ spark.hadoop.fs.gs.auth.service.account.json.keyfile // path to the json file wi
 For cases when a GCS mock is used, an optional endpoint can be provided:
 ```sh
 spark.hadoop.fs.gs.storage.root.url  // url to the mock gcs service including starting with http or https
+```
+
+## Configuring GCS max retry count
+
+For cases when a transient server error is detected, GCS can be configured to keep retrying until a number of transient error is detected.
+```sh
+spark.hadoop.fs.gs.http.max.retry // number of times to keep retrying unless a non-transient error is detected
+```
+
+## Configuring GCS max retry time
+
+For cases when a transient server error is detected, GCS can be configured to keep retrying until the retry loop exceeds a prescribed duration.
+```sh
+spark.hadoop.fs.gs.http.max.retry-time // a string representing the time keep retrying (10s, 1m, etc).
 ```

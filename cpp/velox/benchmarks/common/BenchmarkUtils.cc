@@ -18,24 +18,26 @@
 #include "BenchmarkUtils.h"
 #include "compute/VeloxBackend.h"
 #include "compute/VeloxRuntime.h"
-#include "config/GlutenConfig.h"
+#include "config/VeloxConfig.h"
 #include "shuffle/Utils.h"
 #include "utils/StringUtil.h"
 #include "velox/dwio/common/Options.h"
-
-using namespace facebook;
-namespace fs = std::filesystem;
 
 DEFINE_int64(batch_size, 4096, "To set velox::core::QueryConfig::kPreferredOutputBatchSize.");
 DEFINE_int32(cpu, -1, "Run benchmark on specific CPU");
 DEFINE_int32(threads, 1, "The number of threads to run this benchmark");
 DEFINE_int32(iterations, 1, "The number of iterations to run this benchmark");
 
+namespace gluten {
 namespace {
-
-std::unordered_map<std::string, std::string> bmConfMap = {{gluten::kSparkBatchSize, std::to_string(FLAGS_batch_size)}};
-
+std::unordered_map<std::string, std::string> bmConfMap = defaultConf();
 } // namespace
+
+std::unordered_map<std::string, std::string> defaultConf() {
+  return {
+      {gluten::kSparkBatchSize, std::to_string(FLAGS_batch_size)},
+  };
+}
 
 void initVeloxBackend(std::unordered_map<std::string, std::string>& conf) {
   gluten::VeloxBackend::create(conf);
@@ -55,13 +57,13 @@ std::string getPlanFromFile(const std::string& type, const std::string& filePath
   return gluten::substraitFromJsonToPb(type, msgData);
 }
 
-velox::dwio::common::FileFormat getFileFormat(const std::string& fileFormat) {
+facebook::velox::dwio::common::FileFormat getFileFormat(const std::string& fileFormat) {
   if (fileFormat.compare("orc") == 0) {
-    return velox::dwio::common::FileFormat::ORC;
+    return facebook::velox::dwio::common::FileFormat::ORC;
   } else if (fileFormat.compare("parquet") == 0) {
-    return velox::dwio::common::FileFormat::PARQUET;
+    return facebook::velox::dwio::common::FileFormat::PARQUET;
   } else {
-    return velox::dwio::common::FileFormat::UNKNOWN;
+    return facebook::velox::dwio::common::FileFormat::UNKNOWN;
   }
 }
 
@@ -79,7 +81,7 @@ std::shared_ptr<gluten::SplitInfo> getSplitInfos(const std::string& datasetPath,
       if (endsWith(singleFilePath, "." + fileFormat)) {
         auto fileAbsolutePath = datasetPath + singleFilePath;
         scanInfo->starts.emplace_back(0);
-        scanInfo->lengths.emplace_back(fs::file_size(fileAbsolutePath));
+        scanInfo->lengths.emplace_back(std::filesystem::file_size(fileAbsolutePath));
         scanInfo->paths.emplace_back("file://" + fileAbsolutePath);
       }
     } else {
@@ -97,7 +99,7 @@ std::shared_ptr<gluten::SplitInfo> getSplitInfosFromFile(const std::string& file
 
   // Set split start, length, and path to scan info.
   scanInfo->starts.emplace_back(0);
-  scanInfo->lengths.emplace_back(fs::file_size(fileName));
+  scanInfo->lengths.emplace_back(std::filesystem::file_size(fileName));
   scanInfo->paths.emplace_back("file://" + fileName);
 
   return scanInfo;
@@ -120,63 +122,38 @@ bool endsWith(const std::string& data, const std::string& suffix) {
   return data.find(suffix, data.size() - suffix.size()) != std::string::npos;
 }
 
-#if 0
-std::shared_ptr<arrow::RecordBatchReader> createReader(const std::string& path) {
-  std::unique_ptr<parquet::arrow::FileReader> parquetReader;
-  std::shared_ptr<arrow::RecordBatchReader> recordBatchReader;
-  parquet::ArrowReaderProperties properties = parquet::default_arrow_reader_properties();
-
-  GLUTEN_THROW_NOT_OK(parquet::arrow::FileReader::Make(
-      arrow::default_memory_pool(), parquet::ParquetFileReader::OpenFile(path), properties, &parquetReader));
-  GLUTEN_THROW_NOT_OK(
-      parquetReader->GetRecordBatchReader(arrow::internal::Iota(parquetReader->num_row_groups()), &recordBatchReader));
-  return recordBatchReader;
-}
-#endif
-
-void setCpu(uint32_t cpuindex) {
+void setCpu(uint32_t cpuIndex) {
   static const auto kTotalCores = std::thread::hardware_concurrency();
-  cpuindex = cpuindex % kTotalCores;
+  cpuIndex = cpuIndex % kTotalCores;
   cpu_set_t cs;
   CPU_ZERO(&cs);
-  CPU_SET(cpuindex, &cs);
+  CPU_SET(cpuIndex, &cs);
   if (sched_setaffinity(0, sizeof(cs), &cs) == -1) {
-    LOG(WARNING) << "Error binding CPU " << std::to_string(cpuindex);
-    exit(EXIT_FAILURE);
+    LOG(WARNING) << "Error binding CPU " << std::to_string(cpuIndex);
+    std::exit(EXIT_FAILURE);
   }
 }
 
-arrow::Status
-setLocalDirsAndDataFileFromEnv(std::string& dataFile, std::vector<std::string>& localDirs, bool& isFromEnv) {
-  auto joinedDirsC = std::getenv(gluten::kGlutenSparkLocalDirs.c_str());
-  if (joinedDirsC != nullptr && strcmp(joinedDirsC, "") > 0) {
-    isFromEnv = true;
-    // Set local dirs.
-    auto joinedDirs = std::string(joinedDirsC);
-    // Split local dirs and use thread id to choose one directory for data file.
-    localDirs = gluten::splitPaths(joinedDirs);
-    size_t id = std::hash<std::thread::id>{}(std::this_thread::get_id()) % localDirs.size();
-    ARROW_ASSIGN_OR_RAISE(dataFile, gluten::createTempShuffleFile(localDirs[id]));
+void BenchmarkAllocationListener::allocationChanged(int64_t diff) {
+  if (diff > 0 && usedBytes_ + diff >= limit_) {
+    LOG(INFO) << fmt::format(
+        "reach hard limit {} when need {}, current used {}.",
+        facebook::velox::succinctBytes(limit_),
+        facebook::velox::succinctBytes(diff),
+        facebook::velox::succinctBytes(usedBytes_));
+    auto neededBytes = usedBytes_ + diff - limit_;
+    int64_t spilledBytes = 0;
+    if (iterator_) {
+      spilledBytes += iterator_->spillFixedSize(neededBytes);
+    }
+    if (spilledBytes < neededBytes && shuffleWriter_) {
+      int64_t reclaimed = 0;
+      GLUTEN_THROW_NOT_OK(shuffleWriter_->reclaimFixedSize(neededBytes - spilledBytes, &reclaimed));
+      spilledBytes += reclaimed;
+    }
+    LOG(INFO) << fmt::format("spill finish, got {}.", facebook::velox::succinctBytes(spilledBytes));
   } else {
-    isFromEnv = false;
-    // Otherwise create 1 temp dir and data file.
-    static const std::string kBenchmarkDirsPrefix = "columnar-shuffle-benchmark-";
-    {
-      // Because tmpDir will be deleted in the dtor, allow it to be deleted upon exiting the block and then recreate it
-      // in createTempShuffleFile.
-      ARROW_ASSIGN_OR_RAISE(auto tmpDir, arrow::internal::TemporaryDir::Make(kBenchmarkDirsPrefix))
-      localDirs.push_back(tmpDir->path().ToString());
-    }
-    ARROW_ASSIGN_OR_RAISE(dataFile, gluten::createTempShuffleFile(localDirs.back()));
-  }
-  return arrow::Status::OK();
-}
-
-void cleanupShuffleOutput(const std::string& dataFile, const std::vector<std::string>& localDirs, bool isFromEnv) {
-  std::filesystem::remove(dataFile);
-  for (auto& localDir : localDirs) {
-    if (std::filesystem::is_empty(localDir)) {
-      std::filesystem::remove(localDir);
-    }
+    usedBytes_ += diff;
   }
 }
+} // namespace gluten

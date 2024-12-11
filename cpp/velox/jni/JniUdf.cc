@@ -18,7 +18,7 @@
 #include "JniUdf.h"
 #include "jni/JniCommon.h"
 #include "udf/UdfLoader.h"
-#include "utils/exception.h"
+#include "utils/Exception.h"
 
 namespace {
 
@@ -41,15 +41,15 @@ void gluten::initVeloxJniUDF(JNIEnv* env) {
   udfResolverClass = createGlobalClassReferenceOrError(env, kUdfResolverClassPath.c_str());
 
   // methods
-  registerUDFMethod = getMethodIdOrError(env, udfResolverClass, "registerUDF", "(Ljava/lang/String;[B[B)V");
-  registerUDAFMethod = getMethodIdOrError(env, udfResolverClass, "registerUDAF", "(Ljava/lang/String;[B[B[B)V");
+  registerUDFMethod = getMethodIdOrError(env, udfResolverClass, "registerUDF", "(Ljava/lang/String;[B[BZZ)V");
+  registerUDAFMethod = getMethodIdOrError(env, udfResolverClass, "registerUDAF", "(Ljava/lang/String;[B[B[BZZ)V");
 }
 
 void gluten::finalizeVeloxJniUDF(JNIEnv* env) {
   env->DeleteGlobalRef(udfResolverClass);
 }
 
-void gluten::jniGetFunctionSignatures(JNIEnv* env) {
+void gluten::jniRegisterFunctionSignatures(JNIEnv* env) {
   auto udfLoader = gluten::UdfLoader::getInstance();
 
   const auto& signatures = udfLoader->getRegisteredUdfSignatures();
@@ -70,9 +70,24 @@ void gluten::jniGetFunctionSignatures(JNIEnv* env) {
           0,
           signature->intermediateType.length(),
           reinterpret_cast<const jbyte*>(signature->intermediateType.c_str()));
-      env->CallVoidMethod(instance, registerUDAFMethod, name, returnType, argTypes, intermediateType);
+      env->CallVoidMethod(
+          instance,
+          registerUDAFMethod,
+          name,
+          returnType,
+          argTypes,
+          intermediateType,
+          signature->variableArity,
+          signature->allowTypeConversion);
     } else {
-      env->CallVoidMethod(instance, registerUDFMethod, name, returnType, argTypes);
+      env->CallVoidMethod(
+          instance,
+          registerUDFMethod,
+          name,
+          returnType,
+          argTypes,
+          signature->variableArity,
+          signature->allowTypeConversion);
     }
     checkException(env);
   }

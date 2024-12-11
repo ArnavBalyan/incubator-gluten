@@ -17,7 +17,7 @@
 package org.apache.gluten.execution
 
 import org.apache.gluten.metrics.GlutenTimeMetric
-import org.apache.gluten.vectorized.{CHNativeExpressionEvaluator, CloseableCHColumnBatchIterator, GeneralInIterator, GeneralOutIterator}
+import org.apache.gluten.vectorized.{CHNativeExpressionEvaluator, CloseableCHColumnBatchIterator}
 
 import org.apache.spark.{Partition, SparkContext, SparkException, TaskContext}
 import org.apache.spark.rdd.RDD
@@ -47,17 +47,24 @@ class NativeFileScanColumnarRDD(
       .asInstanceOf[GlutenPartition]
       .splitInfosByteArray
 
-    val resIter: GeneralOutIterator = GlutenTimeMetric.millis(scanTime) {
+    val resIter = GlutenTimeMetric.millis(scanTime) {
       _ =>
-        val transKernel = new CHNativeExpressionEvaluator()
-        val inBatchIters = new util.ArrayList[GeneralInIterator]()
-        transKernel.createKernelWithBatchIterator(
+        val inBatchIters = new util.ArrayList[ColumnarNativeIterator]()
+        CHNativeExpressionEvaluator.createKernelWithBatchIterator(
           inputPartition.plan,
           splitInfoByteArray,
           inBatchIters,
           false
         )
     }
+    TaskContext
+      .get()
+      .addTaskFailureListener(
+        (ctx, _) => {
+          if (ctx.isInterrupted()) {
+            resIter.cancel()
+          }
+        })
     TaskContext.get().addTaskCompletionListener[Unit](_ => resIter.close())
     val iter: Iterator[ColumnarBatch] = new Iterator[ColumnarBatch] {
       var scanTotalTime = 0L

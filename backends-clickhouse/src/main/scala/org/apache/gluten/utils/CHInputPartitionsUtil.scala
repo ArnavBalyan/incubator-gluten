@@ -22,8 +22,8 @@ import org.apache.gluten.sql.shims.SparkShimLoader
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.connector.read.InputPartition
-import org.apache.spark.sql.execution.PartitionedFileUtil
 import org.apache.spark.sql.execution.datasources._
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.SparkResourceUtil
 import org.apache.spark.util.collection.BitSet
 
@@ -33,6 +33,7 @@ import scala.collection.mutable.ArrayBuffer
 
 case class CHInputPartitionsUtil(
     relation: HadoopFsRelation,
+    requiredSchema: StructType,
     selectedPartitions: Array[PartitionDirectory],
     output: Seq[Attribute],
     bucketedScan: Boolean,
@@ -66,7 +67,7 @@ case class CHInputPartitionsUtil(
     val splitFiles = selectedPartitions
       .flatMap {
         partition =>
-          partition.files.flatMap {
+          SparkShimLoader.getSparkShims.getFileStatus(partition).flatMap {
             file =>
               // getPath() is very expensive so we only want to call it once in this block:
               val filePath = file.getPath
@@ -74,13 +75,14 @@ case class CHInputPartitionsUtil(
               if (shouldProcess(filePath)) {
                 val isSplitable =
                   relation.fileFormat.isSplitable(relation.sparkSession, relation.options, filePath)
-                PartitionedFileUtil.splitFiles(
-                  sparkSession = relation.sparkSession,
-                  file = file,
-                  filePath = filePath,
-                  isSplitable = isSplitable,
-                  maxSplitBytes = maxSplitBytes,
-                  partitionValues = partition.values)
+                SparkShimLoader.getSparkShims.splitFiles(
+                  relation.sparkSession,
+                  file,
+                  filePath,
+                  isSplitable,
+                  maxSplitBytes,
+                  partition.values
+                )
               } else {
                 Seq.empty
               }
@@ -89,7 +91,7 @@ case class CHInputPartitionsUtil(
       .sortBy(_.length)(implicitly[Ordering[Long]].reverse)
 
     val totalCores = SparkResourceUtil.getTotalCores(relation.sparkSession.sessionState.conf)
-    val fileCntPerPartition = math.ceil((splitFiles.size * 1.0) / totalCores).toInt
+    val isAllSmallFiles = splitFiles.forall(_.length < maxSplitBytes)
     val fileCntThreshold = relation.sparkSession.sessionState.conf
       .getConfString(
         CHBackendSettings.GLUTEN_CLICKHOUSE_FILES_PER_PARTITION_THRESHOLD,
@@ -97,8 +99,12 @@ case class CHInputPartitionsUtil(
       )
       .toInt
 
-    if (fileCntThreshold > 0 && fileCntPerPartition > fileCntThreshold) {
-      getFilePartitionsByFileCnt(splitFiles, fileCntPerPartition)
+    // calculate the file count for each partition according to the parameter
+    val totalFilesThreshold = totalCores * fileCntThreshold
+    if (fileCntThreshold > 0 && isAllSmallFiles && splitFiles.size <= totalFilesThreshold) {
+      var fileCnt = math.round((splitFiles.size * 1.0) / totalCores).toInt
+      if (fileCnt < 1) fileCnt = 1
+      getFilePartitionsByFileCnt(splitFiles, fileCnt)
     } else {
       FilePartition.getFilePartitions(relation.sparkSession, splitFiles, maxSplitBytes)
     }

@@ -22,18 +22,26 @@ namespace gluten {
 arrow::Status gluten::RoundRobinPartitioner::compute(
     const int32_t* pidArr,
     const int64_t numRows,
-    std::vector<uint32_t>& row2Partition,
-    std::vector<uint32_t>& partition2RowCount) {
-  std::fill(std::begin(partition2RowCount), std::end(partition2RowCount), 0);
+    std::vector<uint32_t>& row2Partition) {
   row2Partition.resize(numRows);
-
   for (int32_t i = 0; i < numRows; ++i) {
     row2Partition[i] = pidSelection_;
     pidSelection_ = (pidSelection_ + 1) % numPartitions_;
   }
+  return arrow::Status::OK();
+}
 
-  for (auto& pid : row2Partition) {
-    partition2RowCount[pid]++;
+arrow::Status gluten::RoundRobinPartitioner::compute(
+    const int32_t* pidArr,
+    const int64_t numRows,
+    const int32_t vectorIndex,
+    std::unordered_map<int32_t, std::vector<int64_t>>& rowVectorIndexMap) {
+  auto index = static_cast<int64_t>(vectorIndex) << 32;
+  for (int32_t i = 0; i < numRows; ++i) {
+    int64_t combined = index | (i & 0xFFFFFFFFLL);
+    auto& vec = rowVectorIndexMap[pidSelection_];
+    vec.push_back(combined);
+    pidSelection_ = (pidSelection_ + 1) % numPartitions_;
   }
 
   return arrow::Status::OK();

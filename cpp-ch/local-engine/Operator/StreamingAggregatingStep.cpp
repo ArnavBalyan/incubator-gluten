@@ -19,9 +19,10 @@
 #include <Processors/Transforms/AggregatingTransform.h>
 #include <QueryPipeline/QueryPipelineBuilder.h>
 #include <Common/CHUtil.h>
-#include <Common/CurrentThread.h>
-#include <Common/formatReadable.h>
+#include <Common/GlutenConfig.h>
+#include <Common/QueryContext.h>
 #include <Common/Stopwatch.h>
+#include <Common/formatReadable.h>
 
 namespace DB
 {
@@ -33,7 +34,8 @@ namespace ErrorCodes
 
 namespace local_engine
 {
-StreamingAggregatingTransform::StreamingAggregatingTransform(DB::ContextPtr context_, const DB::Block &header_, DB::AggregatingTransformParamsPtr params_)
+StreamingAggregatingTransform::StreamingAggregatingTransform(
+    DB::ContextPtr context_, const DB::Block & header_, DB::AggregatingTransformParamsPtr params_)
     : DB::IProcessor({header_}, {params_->getHeader()})
     , context(context_)
     , header(header_)
@@ -41,10 +43,11 @@ StreamingAggregatingTransform::StreamingAggregatingTransform(DB::ContextPtr cont
     , aggregate_columns(params_->params.aggregates_size)
     , params(params_)
 {
-    aggregated_keys_before_evict = context->getConfigRef().getUInt64("aggregated_keys_before_streaming_aggregating_evict", 1024);
+    auto config = StreamingAggregateConfig::loadFromContext(context);
+    aggregated_keys_before_evict = config.aggregated_keys_before_streaming_aggregating_evict;
     aggregated_keys_before_evict = PODArrayUtil::adjustMemoryEfficientSize(aggregated_keys_before_evict);
-    max_allowed_memory_usage_ratio = context->getConfigRef().getDouble("max_memory_usage_ratio_for_streaming_aggregating", 0.9);
-    high_cardinality_threshold = context->getConfigRef().getDouble("high_cardinality_threshold_for_streaming_aggregating", 0.8);
+    max_allowed_memory_usage_ratio = config.max_memory_usage_ratio_for_streaming_aggregating;
+    high_cardinality_threshold = config.high_cardinality_threshold_for_streaming_aggregating;
 }
 
 StreamingAggregatingTransform::~StreamingAggregatingTransform()
@@ -60,18 +63,19 @@ StreamingAggregatingTransform::~StreamingAggregatingTransform()
         total_clear_data_variants_num,
         total_aggregate_time,
         total_convert_data_variants_time,
-        ReadableSize(MemoryUtil::getCurrentMemoryUsage()));
+        ReadableSize(currentThreadGroupMemoryUsage()));
 }
 
 StreamingAggregatingTransform::Status StreamingAggregatingTransform::prepare()
 {
     auto & output = outputs.front();
     auto & input = inputs.front();
-    if (output.isFinished())
+    if (output.isFinished() || isCancelled())
     {
         input.close();
         return Status::Finished;
     }
+
     if (has_output)
     {
         if (output.canPush())
@@ -81,7 +85,7 @@ StreamingAggregatingTransform::Status StreamingAggregatingTransform::prepare()
                 "Output one chunk. rows: {}, bytes: {}, current memory usage: {}",
                 output_chunk.getNumRows(),
                 ReadableSize(output_chunk.bytes()),
-                ReadableSize(MemoryUtil::getCurrentMemoryUsage()));
+                ReadableSize(currentThreadGroupMemoryUsage()));
             total_output_rows += output_chunk.getNumRows();
             total_output_blocks++;
             if (!output_chunk.getNumRows())
@@ -124,7 +128,7 @@ StreamingAggregatingTransform::Status StreamingAggregatingTransform::prepare()
         "Input one new chunk. rows: {}, bytes: {}, current memory usage: {}",
         input_chunk.getNumRows(),
         ReadableSize(input_chunk.bytes()),
-        ReadableSize(MemoryUtil::getCurrentMemoryUsage()));
+        ReadableSize(currentThreadGroupMemoryUsage()));
     total_input_rows += input_chunk.getNumRows();
     total_input_blocks++;
     has_input = true;
@@ -135,21 +139,21 @@ bool StreamingAggregatingTransform::needEvict()
 {
     if (input_finished)
         return true;
-    if (!context->getSettingsRef().max_memory_usage)
+    auto memory_soft_limit = DB::CurrentThread::getGroup()->memory_tracker.getSoftLimit();
+    if (!memory_soft_limit)
         return false;
-
-    auto max_mem_used = static_cast<size_t>(context->getSettingsRef().max_memory_usage * max_allowed_memory_usage_ratio);
+    auto max_mem_used = static_cast<size_t>(memory_soft_limit * max_allowed_memory_usage_ratio);
     auto current_result_rows = data_variants->size();
-    /// avoid evict empty or too small aggregated results. 
+    /// avoid evict empty or too small aggregated results.
     if (current_result_rows < aggregated_keys_before_evict)
         return false;
-    
+
     /// If the grouping keys is high cardinality, we should evict data variants early, and avoid to use a big
     /// hash table.
-    if (static_cast<double>(total_output_rows)/total_input_rows > high_cardinality_threshold)
+    if (static_cast<double>(total_output_rows) / total_input_rows > high_cardinality_threshold)
         return true;
 
-    auto current_mem_used = MemoryUtil::getCurrentMemoryUsage();
+    auto current_mem_used = currentThreadGroupMemoryUsage();
     if (per_key_memory_usage > 0)
     {
         /// When we know each key memory usage, we can take a more greedy memory usage strategy
@@ -260,16 +264,14 @@ void StreamingAggregatingTransform::work()
 
 static DB::ITransformingStep::Traits getTraits()
 {
-    return DB::ITransformingStep::Traits
-    {
+    return DB::ITransformingStep::Traits{
         {
             .preserves_number_of_streams = false,
             .preserves_sorting = false,
         },
         {
             .preserves_number_of_rows = false,
-        }
-    };
+        }};
 }
 
 static DB::Block buildOutputHeader(const DB::Block & input_header_, const DB::Aggregator::Params params_)
@@ -277,8 +279,8 @@ static DB::Block buildOutputHeader(const DB::Block & input_header_, const DB::Ag
     return params_.getHeader(input_header_, false);
 }
 StreamingAggregatingStep::StreamingAggregatingStep(
-    DB::ContextPtr context_, const DB::DataStream & input_stream_, DB::Aggregator::Params params_)
-    : DB::ITransformingStep(input_stream_, buildOutputHeader(input_stream_.header, params_), getTraits())
+    const DB::ContextPtr & context_, const DB::Block & input_header, DB::Aggregator::Params params_)
+    : DB::ITransformingStep(input_header, buildOutputHeader(input_header, params_), getTraits())
     , context(context_)
     , params(std::move(params_))
 {
@@ -288,7 +290,8 @@ void StreamingAggregatingStep::transformPipeline(DB::QueryPipelineBuilder & pipe
 {
     if (params.max_bytes_before_external_group_by)
     {
-        throw DB::Exception(DB::ErrorCodes::LOGICAL_ERROR, "max_bytes_before_external_group_by is not supported in StreamingAggregatingStep");
+        throw DB::Exception(
+            DB::ErrorCodes::LOGICAL_ERROR, "max_bytes_before_external_group_by is not supported in StreamingAggregatingStep");
     }
     pipeline.dropTotalsAndExtremes();
     auto transform_params = std::make_shared<DB::AggregatingTransformParams>(pipeline.getHeader(), params, false);
@@ -309,7 +312,7 @@ void StreamingAggregatingStep::transformPipeline(DB::QueryPipelineBuilder & pipe
 
 void StreamingAggregatingStep::describeActions(DB::IQueryPlanStep::FormatSettings & settings) const
 {
-    return params.explain(settings.out, settings.offset);
+    params.explain(settings.out, settings.offset);
 }
 
 void StreamingAggregatingStep::describeActions(DB::JSONBuilder::JSONMap & map) const
@@ -317,9 +320,9 @@ void StreamingAggregatingStep::describeActions(DB::JSONBuilder::JSONMap & map) c
     params.explain(map);
 }
 
-void StreamingAggregatingStep::updateOutputStream()
+void StreamingAggregatingStep::updateOutputHeader()
 {
-    output_stream = createOutputStream(input_streams.front(), buildOutputHeader(input_streams.front().header, params), getDataStreamTraits());
+    output_header = buildOutputHeader(input_headers.front(), params);
 }
 
 }

@@ -17,9 +17,9 @@
 package org.apache.gluten.softaffinity
 
 import org.apache.gluten.GlutenConfig
+import org.apache.gluten.logging.LogLevelUtil
 import org.apache.gluten.softaffinity.strategy.SoftAffinityStrategy
 import org.apache.gluten.sql.shims.SparkShimLoader
-import org.apache.gluten.utils.LogLevelUtil
 
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.Logging
@@ -28,7 +28,6 @@ import org.apache.spark.sql.execution.datasources.FilePartition
 
 import com.google.common.cache.{CacheBuilder, CacheLoader, LoadingCache}
 
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.ReentrantReadWriteLock
 
@@ -43,31 +42,46 @@ abstract class AffinityManager extends LogLevelUtil with Logging {
 
   lazy val minOnTargetHosts: Int = GlutenConfig.GLUTEN_SOFT_AFFINITY_MIN_TARGET_HOSTS_DEFAULT_VALUE
 
+  lazy val usingSoftAffinity: Boolean = true
+
+  lazy val detectDuplicateReading: Boolean = true
+
+  lazy val duplicateReadingMaxCacheItems: Int =
+    GlutenConfig.GLUTEN_SOFT_AFFINITY_DUPLICATE_READING_MAX_CACHE_ITEMS_DEFAULT_VALUE
+
   // (execId, host) list
-  val fixedIdForExecutors = new mutable.ListBuffer[Option[(String, String)]]()
+  private val idForExecutors = new mutable.ListBuffer[(String, String)]()
+  var sortedIdForExecutors = new mutable.ListBuffer[(String, String)]()
   // host list
   val nodesExecutorsMap = new mutable.HashMap[String, mutable.HashSet[String]]()
 
   protected val totalRegisteredExecutors = new AtomicInteger(0)
 
-  lazy val usingSoftAffinity: Boolean = true
-
-  lazy val logLevel: String = GlutenConfig.getConf.softAffinityLogLevel
-
-  lazy val detectDuplicateReading = true
-
-  lazy val maxDuplicateReadingRecords =
-    GlutenConfig.GLUTEN_SOFT_AFFINITY_MAX_DUPLICATE_READING_RECORDS_DEFAULT_VALUE
-
   // rdd id -> patition id, file path, start, length
-  val rddPartitionInfoMap = new ConcurrentHashMap[Int, Array[(Int, String, Long, Long)]]()
+  val rddPartitionInfoMap: LoadingCache[Integer, Array[(Int, String, Long, Long)]] =
+    CacheBuilder
+      .newBuilder()
+      .maximumSize(duplicateReadingMaxCacheItems)
+      .build(new CacheLoader[Integer, Array[(Int, String, Long, Long)]] {
+        override def load(id: Integer): Array[(Int, String, Long, Long)] = {
+          Array.empty[(Int, String, Long, Long)]
+        }
+      })
   // stage id -> execution id + rdd ids: job start / execution end
-  val stageInfoMap = new ConcurrentHashMap[Int, Array[Int]]()
+  val stageInfoMap: LoadingCache[Integer, Array[Int]] =
+    CacheBuilder
+      .newBuilder()
+      .maximumSize(duplicateReadingMaxCacheItems)
+      .build(new CacheLoader[Integer, Array[Int]] {
+        override def load(id: Integer): Array[Int] = {
+          Array.empty[Int]
+        }
+      })
   // final result: partition composed key("path1_start_length,path2_start_length") --> array_host
   val duplicateReadingInfos: LoadingCache[String, Array[(String, String)]] =
     CacheBuilder
       .newBuilder()
-      .maximumSize(maxDuplicateReadingRecords)
+      .maximumSize(duplicateReadingMaxCacheItems)
       .build(new CacheLoader[String, Array[(String, String)]] {
         override def load(name: String): Array[(String, String)] = {
           Array.empty[(String, String)]
@@ -83,27 +97,23 @@ abstract class AffinityManager extends LogLevelUtil with Logging {
     try {
       // first, check whether the execId exists
       if (
-        !fixedIdForExecutors.exists(
+        !idForExecutors.exists(
           exec => {
-            exec.isDefined && exec.get._1.equals(execHostId._1)
+            exec._1.equals(execHostId._1)
           })
       ) {
         val executorsSet =
           nodesExecutorsMap.getOrElseUpdate(execHostId._2, new mutable.HashSet[String]())
         executorsSet.add(execHostId._1)
-        if (fixedIdForExecutors.exists(_.isEmpty)) {
-          // replace the executor which was removed
-          val replaceIdx = fixedIdForExecutors.indexWhere(_.isEmpty)
-          fixedIdForExecutors(replaceIdx) = Option(execHostId)
-        } else {
-          fixedIdForExecutors += Option(execHostId)
-        }
+        idForExecutors += execHostId
+        sortedIdForExecutors = idForExecutors.sortBy(_._2)
         totalRegisteredExecutors.addAndGet(1)
       }
       logOnLevel(
-        logLevel,
+        GlutenConfig.getConf.softAffinityLogLevel,
         s"After adding executor ${execHostId._1} on host ${execHostId._2}, " +
-          s"fixedIdForExecutors is ${fixedIdForExecutors.mkString(",")}, " +
+          s"idForExecutors is ${idForExecutors.mkString(",")}, " +
+          s"sortedIdForExecutors is ${sortedIdForExecutors.mkString(",")}, " +
           s"nodesExecutorsMap is ${nodesExecutorsMap.keySet.mkString(",")}, " +
           s"actual executors count is ${totalRegisteredExecutors.intValue()}."
       )
@@ -115,29 +125,27 @@ abstract class AffinityManager extends LogLevelUtil with Logging {
   def handleExecutorRemoved(execId: String): Unit = {
     resourceRWLock.writeLock().lock()
     try {
-      val execIdx = fixedIdForExecutors.indexWhere(
+      val execIdx = idForExecutors.indexWhere(
         execHost => {
-          if (execHost.isDefined) {
-            execHost.get._1.equals(execId)
-          } else {
-            false
-          }
+          execHost._1.equals(execId)
         })
       if (execIdx != -1) {
-        val findedExecId = fixedIdForExecutors(execIdx)
-        fixedIdForExecutors(execIdx) = None
-        val nodeExecs = nodesExecutorsMap(findedExecId.get._2)
-        nodeExecs -= findedExecId.get._1
+        val findedExecId = idForExecutors(execIdx)
+        idForExecutors.remove(execIdx)
+        val nodeExecs = nodesExecutorsMap(findedExecId._2)
+        nodeExecs -= findedExecId._1
         if (nodeExecs.isEmpty) {
           // there is no executor on this host, remove
-          nodesExecutorsMap.remove(findedExecId.get._2)
+          nodesExecutorsMap.remove(findedExecId._2)
         }
+        sortedIdForExecutors = idForExecutors.sortBy(_._2)
         totalRegisteredExecutors.addAndGet(-1)
       }
       logOnLevel(
-        logLevel,
+        GlutenConfig.getConf.softAffinityLogLevel,
         s"After removing executor $execId, " +
-          s"fixedIdForExecutors is ${fixedIdForExecutors.mkString(",")}, " +
+          s"idForExecutors is ${idForExecutors.mkString(",")}, " +
+          s"sortedIdForExecutors is ${sortedIdForExecutors.mkString(",")}, " +
           s"nodesExecutorsMap is ${nodesExecutorsMap.keySet.mkString(",")}, " +
           s"actual executors count is ${totalRegisteredExecutors.intValue()}."
       )
@@ -162,11 +170,11 @@ abstract class AffinityManager extends LogLevelUtil with Logging {
     event.reason match {
       case org.apache.spark.Success =>
         val stageId = event.stageId
-        val rddInfo = stageInfoMap.get(stageId)
+        val rddInfo = stageInfoMap.getIfPresent(stageId)
         if (rddInfo != null) {
           rddInfo.foreach {
             rddId =>
-              val partitions = rddPartitionInfoMap.get(rddId)
+              val partitions = rddPartitionInfoMap.getIfPresent(rddId)
               if (partitions != null) {
                 val key = partitions
                   .filter(p => p._1 == SparkShimLoader.getSparkShims.getPartitionId(event.taskInfo))
@@ -180,7 +188,9 @@ abstract class AffinityManager extends LogLevelUtil with Logging {
                 } else {
                   (originalValues ++ value)
                 }
-                logOnLevel(logLevel, s"update host for $key: ${values.mkString(",")}")
+                logOnLevel(
+                  GlutenConfig.getConf.softAffinityLogLevel,
+                  s"update host for $key: ${values.mkString(",")}")
                 duplicateReadingInfos.put(key, values)
               }
           }
@@ -195,11 +205,11 @@ abstract class AffinityManager extends LogLevelUtil with Logging {
   }
 
   def clearPartitionMap(rddIds: Seq[Int]): Unit = {
-    rddIds.foreach(id => rddPartitionInfoMap.remove(id))
+    rddIds.foreach(id => rddPartitionInfoMap.invalidate(id))
   }
 
   def clearStageMap(id: Int): Unit = {
-    stageInfoMap.remove(id)
+    stageInfoMap.invalidate(id)
   }
 
   def checkTargetHosts(hosts: Array[String]): Boolean = {
@@ -227,7 +237,7 @@ abstract class AffinityManager extends LogLevelUtil with Logging {
       if (nodesExecutorsMap.size < 1) {
         Array.empty
       } else {
-        softAffinityAllocation.allocateExecs(file, fixedIdForExecutors)
+        softAffinityAllocation.allocateExecs(file, sortedIdForExecutors)
       }
     } finally {
       resourceRWLock.readLock().unlock()
@@ -237,11 +247,11 @@ abstract class AffinityManager extends LogLevelUtil with Logging {
   def askExecutors(f: FilePartition): Array[(String, String)] = {
     resourceRWLock.readLock().lock()
     try {
-      if (fixedIdForExecutors.size < 1) {
+      if (sortedIdForExecutors.size < 1) {
         Array.empty
       } else {
         val result = getDuplicateReadingLocation(f)
-        result.filter(r => fixedIdForExecutors.exists(s => s.isDefined && s.get._1 == r._1)).toArray
+        result.filter(r => sortedIdForExecutors.exists(s => s._1 == r._1)).toArray
       }
     } finally {
       resourceRWLock.readLock().unlock()
@@ -261,9 +271,11 @@ abstract class AffinityManager extends LogLevelUtil with Logging {
 
     if (!hosts.isEmpty) {
       rand.shuffle(hosts)
-      logOnLevel(logLevel, s"get host for $f: ${hosts.distinct.mkString(",")}")
+      logOnLevel(
+        GlutenConfig.getConf.softAffinityLogLevel,
+        s"get host for $f: ${hosts.distinct.mkString(",")}")
     }
-    hosts.distinct
+    hosts.distinct.toSeq
   }
 
   def updatePartitionMap(f: FilePartition, rddId: Int): Unit = {
@@ -274,8 +286,9 @@ abstract class AffinityManager extends LogLevelUtil with Logging {
     val paths =
       f.files.map(file => (f.index, file.filePath.toString, file.start, file.length)).toArray
     val key = rddId
-    val values = if (rddPartitionInfoMap.containsKey(key)) {
-      rddPartitionInfoMap.get(key) ++ paths
+    var values = rddPartitionInfoMap.getIfPresent(key)
+    values = if (values != null) {
+      values ++ paths
     } else {
       paths
     }
@@ -294,14 +307,14 @@ object SoftAffinityManager extends AffinityManager {
     GlutenConfig.GLUTEN_SOFT_AFFINITY_MIN_TARGET_HOSTS_DEFAULT_VALUE
   )
 
-  override lazy val detectDuplicateReading = SparkEnv.get.conf.getBoolean(
+  override lazy val detectDuplicateReading: Boolean = SparkEnv.get.conf.getBoolean(
     GlutenConfig.GLUTEN_SOFT_AFFINITY_DUPLICATE_READING_DETECT_ENABLED,
     GlutenConfig.GLUTEN_SOFT_AFFINITY_DUPLICATE_READING_DETECT_ENABLED_DEFAULT_VALUE
   ) &&
     SparkShimLoader.getSparkShims.supportDuplicateReadingTracking
 
-  override lazy val maxDuplicateReadingRecords = SparkEnv.get.conf.getInt(
-    GlutenConfig.GLUTEN_SOFT_AFFINITY_MAX_DUPLICATE_READING_RECORDS,
-    GlutenConfig.GLUTEN_SOFT_AFFINITY_MAX_DUPLICATE_READING_RECORDS_DEFAULT_VALUE
+  override lazy val duplicateReadingMaxCacheItems: Int = SparkEnv.get.conf.getInt(
+    GlutenConfig.GLUTEN_SOFT_AFFINITY_DUPLICATE_READING_MAX_CACHE_ITEMS,
+    GlutenConfig.GLUTEN_SOFT_AFFINITY_DUPLICATE_READING_MAX_CACHE_ITEMS_DEFAULT_VALUE
   )
 }

@@ -21,8 +21,7 @@
 
 namespace gluten {
 
-Spill::Spill(Spill::SpillType type, uint32_t /* numPartitions */, const std::string& spillFile)
-    : type_(type), spillFile_(spillFile) {}
+Spill::Spill(Spill::SpillType type) : type_(type) {}
 
 Spill::~Spill() {
   if (is_) {
@@ -35,7 +34,6 @@ bool Spill::hasNextPayload(uint32_t partitionId) {
 }
 
 std::unique_ptr<Payload> Spill::nextPayload(uint32_t partitionId) {
-  openSpillFile();
   if (!hasNextPayload(partitionId)) {
     return nullptr;
   }
@@ -49,7 +47,7 @@ void Spill::insertPayload(
     Payload::Type payloadType,
     uint32_t numRows,
     const std::vector<bool>* isValidityBuffer,
-    uint64_t rawSize,
+    int64_t rawSize,
     arrow::MemoryPool* pool,
     arrow::util::Codec* codec) {
   // TODO: Add compression threshold.
@@ -62,21 +60,48 @@ void Spill::insertPayload(
                payloadType, numRows, isValidityBuffer, rawIs_, rawSize, pool, codec)});
       break;
     case Payload::Type::kCompressed:
+    case Payload::Type::kRaw:
       partitionPayloads_.push_back(
           {partitionId,
            std::make_unique<CompressedDiskBlockPayload>(numRows, isValidityBuffer, rawIs_, rawSize, pool)});
       break;
+    default:
+      throw GlutenException("Unreachable.");
   }
 }
 
-void Spill::openSpillFile() {
+void Spill::openForRead(uint64_t shuffleFileBufferSize) {
   if (!is_) {
-    GLUTEN_ASSIGN_OR_THROW(is_, arrow::io::MemoryMappedFile::Open(spillFile_, arrow::io::FileMode::READ));
+    GLUTEN_ASSIGN_OR_THROW(is_, MmapFileStream::open(spillFile_, shuffleFileBufferSize));
     rawIs_ = is_.get();
   }
 }
 
 Spill::SpillType Spill::type() const {
   return type_;
+}
+
+void Spill::setSpillFile(const std::string& spillFile) {
+  spillFile_ = spillFile;
+}
+
+void Spill::setSpillTime(int64_t spillTime) {
+  spillTime_ = spillTime;
+}
+
+void Spill::setCompressTime(int64_t compressTime) {
+  compressTime_ = compressTime;
+}
+
+std::string Spill::spillFile() const {
+  return spillFile_;
+}
+
+int64_t Spill::spillTime() const {
+  return spillTime_;
+}
+
+int64_t Spill::compressTime() const {
+  return compressTime_;
 }
 } // namespace gluten

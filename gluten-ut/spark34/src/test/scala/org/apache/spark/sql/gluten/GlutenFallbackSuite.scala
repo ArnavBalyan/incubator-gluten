@@ -16,21 +16,27 @@
  */
 package org.apache.spark.sql.gluten
 
-import org.apache.gluten.{GlutenConfig, VERSION}
+import org.apache.gluten.{GlutenBuildInfo, GlutenConfig}
 import org.apache.gluten.events.GlutenPlanFallbackEvent
 import org.apache.gluten.execution.FileSourceScanExecTransformer
 import org.apache.gluten.utils.BackendTestUtils
 
+import org.apache.spark.SparkConf
 import org.apache.spark.scheduler.{SparkListener, SparkListenerEvent}
 import org.apache.spark.sql.{GlutenSQLTestsTrait, Row}
 import org.apache.spark.sql.execution.ProjectExec
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
+import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.execution.ui.{GlutenSQLAppStatusStore, SparkListenerSQLExecutionStart}
 import org.apache.spark.status.ElementTrackingStore
 
 import scala.collection.mutable.ArrayBuffer
 
 class GlutenFallbackSuite extends GlutenSQLTestsTrait with AdaptiveSparkPlanHelper {
+  override def sparkConf: SparkConf = {
+    super.sparkConf
+      .set(GlutenConfig.RAS_ENABLED.key, "false")
+  }
 
   testGluten("test fallback logging") {
     val testAppender = new LogAppender("fallback reason")
@@ -54,7 +60,12 @@ class GlutenFallbackSuite extends GlutenSQLTestsTrait with AdaptiveSparkPlanHelp
   testGluten("test fallback event") {
     val kvStore = spark.sparkContext.statusStore.store.asInstanceOf[ElementTrackingStore]
     val glutenStore = new GlutenSQLAppStatusStore(kvStore)
-    assert(glutenStore.buildInfo().info.find(_._1 == "Gluten Version").exists(_._2 == VERSION))
+    assert(
+      glutenStore
+        .buildInfo()
+        .info
+        .find(_._1 == "Gluten Version")
+        .exists(_._2 == GlutenBuildInfo.VERSION))
 
     def runExecution(sqlString: String): Long = {
       var id = 0L
@@ -168,17 +179,51 @@ class GlutenFallbackSuite extends GlutenSQLTestsTrait with AdaptiveSparkPlanHelp
     withSQLConf(GlutenConfig.EXPRESSION_BLACK_LIST.key -> "add") {
       try {
         val df = spark.sql("select sum(id + 1) from range(10)")
-        spark.sparkContext.listenerBus.waitUntilEmpty()
         df.collect()
+        spark.sparkContext.listenerBus.waitUntilEmpty()
         val project = find(df.queryExecution.executedPlan) {
           _.isInstanceOf[ProjectExec]
         }
         assert(project.isDefined)
-        events.exists(
-          _.fallbackNodeToReason.values.toSet
-            .contains("Project: Not supported to map spark function name"))
+        assert(
+          events.exists(_.fallbackNodeToReason.values.toSet
+            .exists(_.contains("Not supported to map spark function name"))))
       } finally {
         spark.sparkContext.removeSparkListener(listener)
+      }
+    }
+  }
+
+  test("ExpandFallbackPolicy should propagate fallback reason to vanilla SparkPlan") {
+    val events = new ArrayBuffer[GlutenPlanFallbackEvent]
+    val listener = new SparkListener {
+      override def onOtherEvent(event: SparkListenerEvent): Unit = {
+        event match {
+          case e: GlutenPlanFallbackEvent => events.append(e)
+          case _ =>
+        }
+      }
+    }
+    spark.sparkContext.addSparkListener(listener)
+    spark.range(10).selectExpr("id as c1", "id as c2").write.format("parquet").saveAsTable("t")
+    withTable("t") {
+      withSQLConf(
+        GlutenConfig.EXPRESSION_BLACK_LIST.key -> "max",
+        GlutenConfig.COLUMNAR_WHOLESTAGE_FALLBACK_THRESHOLD.key -> "1") {
+        try {
+          val df = spark.sql("select c2, max(c1) as id from t group by c2")
+          df.collect()
+          spark.sparkContext.listenerBus.waitUntilEmpty()
+          val agg = collect(df.queryExecution.executedPlan) { case a: HashAggregateExec => a }
+          assert(agg.size == 2)
+          assert(
+            events.count(
+              _.fallbackNodeToReason.values.toSet.exists(_.contains(
+                "Could not find a valid substrait mapping name for max"
+              ))) == 2)
+        } finally {
+          spark.sparkContext.removeSparkListener(listener)
+        }
       }
     }
   }

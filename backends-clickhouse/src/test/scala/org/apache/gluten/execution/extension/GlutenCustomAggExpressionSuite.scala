@@ -32,7 +32,7 @@ class GlutenCustomAggExpressionSuite extends GlutenClickHouseTPCHAbstractSuite {
 
   override protected val tablesPath: String = basePath + "/tpch-data"
   override protected val tpchQueries: String =
-    rootPath + "../../../../gluten-core/src/test/resources/tpch-queries"
+    rootPath + "../../../../tools/gluten-it/common/src/main/resources/tpch-queries"
   override protected val queriesResults: String = rootPath + "queries-output"
 
   override protected def sparkConf: SparkConf = {
@@ -91,7 +91,7 @@ class GlutenCustomAggExpressionSuite extends GlutenClickHouseTPCHAbstractSuite {
     assert(planExecs(3).isInstanceOf[HashAggregateExec])
 
     val substraitContext = new SubstraitContext
-    planExecs(2).asInstanceOf[CHHashAggregateExecTransformer].doTransform(substraitContext)
+    planExecs(2).asInstanceOf[CHHashAggregateExecTransformer].transform(substraitContext)
 
     // Check the functions
     assert(substraitContext.registeredFunction.containsKey("custom_sum_double:req_fp64"))

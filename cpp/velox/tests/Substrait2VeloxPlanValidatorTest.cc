@@ -35,6 +35,7 @@ using namespace facebook::velox::connector::hive;
 using namespace facebook::velox::exec;
 
 namespace gluten {
+
 class Substrait2VeloxPlanValidatorTest : public exec::test::HiveConnectorTestBase {
  protected:
   bool validatePlan(std::string file) {
@@ -46,7 +47,7 @@ class Substrait2VeloxPlanValidatorTest : public exec::test::HiveConnectorTestBas
   }
 
   bool validatePlan(::substrait::Plan& plan) {
-    std::shared_ptr<core::QueryCtx> queryCtx = std::make_shared<core::QueryCtx>();
+    auto queryCtx = core::QueryCtx::create();
 
     // An execution context used for function validation.
     std::unique_ptr<core::ExecCtx> execCtx = std::make_unique<core::ExecCtx>(pool_.get(), queryCtx.get());
@@ -54,9 +55,6 @@ class Substrait2VeloxPlanValidatorTest : public exec::test::HiveConnectorTestBas
     auto planValidator = std::make_shared<SubstraitToVeloxPlanValidator>(pool_.get(), execCtx.get());
     return planValidator->validate(plan);
   }
-
- private:
-  std::shared_ptr<memory::MemoryPool> memoryPool_{gluten::defaultLeafVeloxMemoryPool()};
 };
 
 TEST_F(Substrait2VeloxPlanValidatorTest, group) {
@@ -67,4 +65,5 @@ TEST_F(Substrait2VeloxPlanValidatorTest, group) {
 
   ASSERT_FALSE(validatePlan(substraitPlan));
 }
+
 } // namespace gluten

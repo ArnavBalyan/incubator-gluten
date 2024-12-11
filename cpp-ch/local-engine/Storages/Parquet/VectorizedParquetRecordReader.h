@@ -230,19 +230,17 @@ public:
 class VectorizedParquetBlockInputFormat final : public DB::IInputFormat
 {
     std::atomic<int> is_stopped{0};
-    DB::BlockMissingValues block_missing_values;
     VectorizedParquetRecordReader record_reader_;
     ColumnIndexFilterPtr column_index_filter_;
 
 protected:
-    void onCancel() override { is_stopped = 1; }
+    void onCancel() noexcept override { is_stopped = 1; }
 
 public:
     VectorizedParquetBlockInputFormat(DB::ReadBuffer & in_, const DB::Block & header_, const DB::FormatSettings & format_settings);
     void setColumnIndexFilter(const ColumnIndexFilterPtr & column_index_filter) { column_index_filter_ = column_index_filter; }
     String getName() const override { return "VectorizedParquetBlockInputFormat"; }
     void resetParser() override;
-    const DB::BlockMissingValues & getMissingValues() const override;
 
 private:
     DB::Chunk read() override;

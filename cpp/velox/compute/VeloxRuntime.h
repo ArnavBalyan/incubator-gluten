@@ -22,98 +22,63 @@
 #include "memory/VeloxMemoryManager.h"
 #include "operators/serializer/VeloxColumnarBatchSerializer.h"
 #include "operators/serializer/VeloxColumnarToRowConverter.h"
-#include "operators/writer/VeloxParquetDatasource.h"
+#include "operators/writer/VeloxParquetDataSource.h"
 #include "shuffle/ShuffleReader.h"
 #include "shuffle/ShuffleWriter.h"
 
 namespace gluten {
 
-// This kind string must be same with VeloxBackend#name in java side.
-inline static const std::string kVeloxRuntimeKind{"velox"};
-
 class VeloxRuntime final : public Runtime {
  public:
-  explicit VeloxRuntime(const std::unordered_map<std::string, std::string>& confMap);
+  explicit VeloxRuntime(
+      const std::string& kind,
+      VeloxMemoryManager* vmm,
+      const std::unordered_map<std::string, std::string>& confMap);
 
   void parsePlan(const uint8_t* data, int32_t size, std::optional<std::string> dumpFile) override;
 
   void parseSplitInfo(const uint8_t* data, int32_t size, std::optional<std::string> dumpFile) override;
 
-  static std::shared_ptr<facebook::velox::memory::MemoryPool> getAggregateVeloxPool(MemoryManager* memoryManager) {
-    return toVeloxMemoryManager(memoryManager)->getAggregateMemoryPool();
-  }
-
-  static std::shared_ptr<facebook::velox::memory::MemoryPool> getLeafVeloxPool(MemoryManager* memoryManager) {
-    return toVeloxMemoryManager(memoryManager)->getLeafMemoryPool();
-  }
-
-  static VeloxMemoryManager* toVeloxMemoryManager(MemoryManager* memoryManager) {
-    if (auto veloxMemoryManager = dynamic_cast<VeloxMemoryManager*>(memoryManager)) {
-      return veloxMemoryManager;
-    } else {
-      GLUTEN_CHECK(false, "Velox memory manager should be used for Velox runtime.");
-    }
-  }
-
-  MemoryManager* createMemoryManager(
-      const std::string& name,
-      std::shared_ptr<MemoryAllocator> allocator,
-      std::unique_ptr<AllocationListener> listener) override {
-    return new VeloxMemoryManager(name, allocator, std::move(listener));
-  }
+  VeloxMemoryManager* memoryManager() override;
 
   // FIXME This is not thread-safe?
   std::shared_ptr<ResultIterator> createResultIterator(
-      MemoryManager* memoryManager,
       const std::string& spillDir,
       const std::vector<std::shared_ptr<ResultIterator>>& inputs = {},
       const std::unordered_map<std::string, std::string>& sessionConf = {}) override;
 
-  std::shared_ptr<ColumnarToRowConverter> createColumnar2RowConverter(MemoryManager* memoryManager) override;
+  std::shared_ptr<ColumnarToRowConverter> createColumnar2RowConverter(int64_t column2RowMemThreshold) override;
 
   std::shared_ptr<ColumnarBatch> createOrGetEmptySchemaBatch(int32_t numRows) override;
 
-  std::shared_ptr<ColumnarBatch> select(
-      MemoryManager* memoryManager,
-      std::shared_ptr<ColumnarBatch> batch,
-      std::vector<int32_t> columnIndices) override;
+  std::shared_ptr<ColumnarBatch> select(std::shared_ptr<ColumnarBatch> batch, const std::vector<int32_t>& columnIndices)
+      override;
 
-  std::shared_ptr<RowToColumnarConverter> createRow2ColumnarConverter(
-      MemoryManager* memoryManager,
-      struct ArrowSchema* cSchema) override;
+  std::shared_ptr<RowToColumnarConverter> createRow2ColumnarConverter(struct ArrowSchema* cSchema) override;
 
   std::shared_ptr<ShuffleWriter> createShuffleWriter(
       int numPartitions,
       std::unique_ptr<PartitionWriter> partitionWriter,
-      ShuffleWriterOptions options,
-      MemoryManager* memoryManager) override;
+      ShuffleWriterOptions options) override;
 
   Metrics* getMetrics(ColumnarBatchIterator* rawIter, int64_t exportNanos) override {
     auto iter = static_cast<WholeStageResultIterator*>(rawIter);
     return iter->getMetrics(exportNanos);
   }
 
-  std::shared_ptr<Datasource> createDatasource(
-      const std::string& filePath,
-      MemoryManager* memoryManager,
-      std::shared_ptr<arrow::Schema> schema) override;
-
   std::shared_ptr<ShuffleReader> createShuffleReader(
       std::shared_ptr<arrow::Schema> schema,
-      ShuffleReaderOptions options,
-      arrow::MemoryPool* pool,
-      MemoryManager* memoryManager) override;
+      ShuffleReaderOptions options) override;
 
-  std::unique_ptr<ColumnarBatchSerializer> createColumnarBatchSerializer(
-      MemoryManager* memoryManager,
-      arrow::MemoryPool* arrowPool,
-      struct ArrowSchema* cSchema) override;
+  std::unique_ptr<ColumnarBatchSerializer> createColumnarBatchSerializer(struct ArrowSchema* cSchema) override;
 
   std::string planString(bool details, const std::unordered_map<std::string, std::string>& sessionConf) override;
 
-  void injectWriteFilesTempPath(const std::string& path) override;
-
   void dumpConf(const std::string& path) override;
+
+  std::shared_ptr<ArrowWriter> createArrowWriter(const std::string& path) override;
+
+  std::shared_ptr<VeloxDataSource> createDataSource(const std::string& filePath, std::shared_ptr<arrow::Schema> schema);
 
   std::shared_ptr<const facebook::velox::core::PlanNode> getVeloxPlan() {
     return veloxPlan_;
@@ -132,10 +97,10 @@ class VeloxRuntime final : public Runtime {
 
  private:
   std::shared_ptr<const facebook::velox::core::PlanNode> veloxPlan_;
-  std::shared_ptr<const facebook::velox::Config> veloxCfg_;
+  std::shared_ptr<facebook::velox::config::ConfigBase> veloxCfg_;
   bool debugModeEnabled_{false};
 
-  std::unordered_map<int32_t, std::shared_ptr<ColumnarBatch>> emptySchemaBatchLoopUp_;
+  std::unordered_map<int32_t, std::shared_ptr<VeloxColumnarBatch>> emptySchemaBatchLoopUp_;
 };
 
 } // namespace gluten

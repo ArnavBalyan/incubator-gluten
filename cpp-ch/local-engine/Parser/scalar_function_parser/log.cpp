@@ -19,6 +19,7 @@
 #include <DataTypes/DataTypeNullable.h>
 #include <Parser/FunctionParser.h>
 #include <Common/CHUtil.h>
+#include <Parser/ExpressionParser.h>
 
 namespace DB
 {
@@ -35,16 +36,16 @@ namespace local_engine
 class FunctionParserLog : public FunctionParser
 {
 public:
-    explicit FunctionParserLog(SerializedPlanParser * plan_parser_) : FunctionParser(plan_parser_) {}
+    explicit FunctionParserLog(ParserContextPtr parser_context_) : FunctionParser(parser_context_) {}
     ~FunctionParserLog() override = default;
 
-    static constexpr auto name = "logarithm";
+    static constexpr auto name = "log";
 
     String getName() const override { return name; }
 
     const ActionsDAG::Node * parse(
         const substrait::Expression_ScalarFunction & substrait_func,
-        ActionsDAGPtr & actions_dag) const override
+        ActionsDAG & actions_dag) const override
     {
         /*
             parse log(x, y) as
@@ -53,7 +54,7 @@ public:
             else
                 ln(y) / ln(x)
         */
-        auto parsed_args = parseFunctionArguments(substrait_func, "", actions_dag);
+        auto parsed_args = parseFunctionArguments(substrait_func, actions_dag);
         if (parsed_args.size() != 2)
             throw Exception(ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH, "Function {} requires exactly two arguments", getName());
 

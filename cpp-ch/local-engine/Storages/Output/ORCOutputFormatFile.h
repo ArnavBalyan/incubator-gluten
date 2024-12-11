@@ -20,10 +20,8 @@
 #include "config.h"
 
 #if USE_ORC
-
-#    include <memory>
-#    include <IO/WriteBuffer.h>
-#    include <Storages/Output/OutputFormatFile.h>
+#include <IO/WriteBuffer.h>
+#include <Storages/Output/OutputFormatFile.h>
 
 namespace local_engine
 {
@@ -34,8 +32,7 @@ public:
         DB::ContextPtr context_,
         const std::string & file_uri_,
         WriteBufferBuilderPtr write_buffer_builder_,
-        const std::vector<std::string> & preferred_column_names_);
-    ~ORCOutputFormatFile() override = default;
+        const DB::Block & preferred_schema_);
 
     OutputFormatFile::OutputFormatPtr createOutputFormat(const DB::Block & header) override;
 };

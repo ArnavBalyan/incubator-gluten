@@ -16,13 +16,13 @@
  */
 package org.apache.gluten.execution
 
+import org.apache.gluten.GlutenConfig
 import org.apache.gluten.backendsapi.BackendsApiManager
 import org.apache.gluten.columnarbatch.ColumnarBatches
-import org.apache.gluten.exception.GlutenException
-import org.apache.gluten.exec.Runtimes
-import org.apache.gluten.memory.arrowalloc.ArrowBufferAllocators
-import org.apache.gluten.memory.nmm.NativeMemoryManagers
-import org.apache.gluten.utils.{ArrowAbiUtil, Iterators}
+import org.apache.gluten.iterator.Iterators
+import org.apache.gluten.memory.arrow.alloc.ArrowBufferAllocators
+import org.apache.gluten.runtime.Runtimes
+import org.apache.gluten.utils.ArrowAbiUtil
 import org.apache.gluten.vectorized._
 
 import org.apache.spark.broadcast.Broadcast
@@ -35,8 +35,8 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.utils.SparkArrowUtil
 import org.apache.spark.sql.vectorized.ColumnarBatch
+import org.apache.spark.task.TaskResources
 import org.apache.spark.unsafe.Platform
-import org.apache.spark.util.TaskResources
 
 import org.apache.arrow.c.ArrowSchema
 import org.apache.arrow.memory.ArrowBuf
@@ -44,21 +44,11 @@ import org.apache.arrow.memory.ArrowBuf
 import scala.collection.mutable.ListBuffer
 
 case class RowToVeloxColumnarExec(child: SparkPlan) extends RowToColumnarExecBase(child = child) {
-
   override def doExecuteColumnarInternal(): RDD[ColumnarBatch] = {
-    BackendsApiManager.getValidatorApiInstance.doSchemaValidate(schema).foreach {
-      reason =>
-        throw new GlutenException(
-          s"Input schema contains unsupported type when convert row to columnar for $schema " +
-            s"due to $reason")
-    }
-
     val numInputRows = longMetric("numInputRows")
     val numOutputBatches = longMetric("numOutputBatches")
     val convertTime = longMetric("convertTime")
-    // Instead of creating a new config we are reusing columnBatchSize. In the future if we do
-    // combine with some of the Arrow conversion tools we will need to unify some of the configs.
-    val numRows = conf.columnBatchSize
+    val numRows = GlutenConfig.getConf.maxBatchSize
     // This avoids calling `schema` in the RDD closure, so that we don't need to include the entire
     // plan (this) in the closure.
     val localSchema = schema
@@ -70,8 +60,7 @@ case class RowToVeloxColumnarExec(child: SparkPlan) extends RowToColumnarExecBas
           numInputRows,
           numOutputBatches,
           convertTime,
-          numRows
-        )
+          numRows)
     }
   }
 
@@ -79,9 +68,7 @@ case class RowToVeloxColumnarExec(child: SparkPlan) extends RowToColumnarExecBas
     val numInputRows = longMetric("numInputRows")
     val numOutputBatches = longMetric("numOutputBatches")
     val convertTime = longMetric("convertTime")
-    // Instead of creating a new config we are reusing columnBatchSize. In the future if we do
-    // combine with some of the Arrow conversion tools we will need to unify some of the configs.
-    val numRows = conf.columnBatchSize
+    val numRows = GlutenConfig.getConf.maxBatchSize
     val mode = BroadcastUtils.getBroadcastMode(outputPartitioning)
     val relation = child.executeBroadcast()
     BroadcastUtils.sparkToVeloxUnsafe(
@@ -96,9 +83,7 @@ case class RowToVeloxColumnarExec(child: SparkPlan) extends RowToColumnarExecBas
           numInputRows,
           numOutputBatches,
           convertTime,
-          numRows
-        )
-    )
+          numRows))
   }
 
   // For spark 3.2.
@@ -107,6 +92,23 @@ case class RowToVeloxColumnarExec(child: SparkPlan) extends RowToColumnarExecBas
 }
 
 object RowToVeloxColumnarExec {
+
+  def toColumnarBatchIterator(
+      it: Iterator[InternalRow],
+      schema: StructType,
+      columnBatchSize: Int): Iterator[ColumnarBatch] = {
+    val numInputRows = new SQLMetric("numInputRows")
+    val numOutputBatches = new SQLMetric("numOutputBatches")
+    val convertTime = new SQLMetric("convertTime")
+    RowToVeloxColumnarExec.toColumnarBatchIterator(
+      it,
+      schema,
+      numInputRows,
+      numOutputBatches,
+      convertTime,
+      columnBatchSize)
+  }
+
   def toColumnarBatchIterator(
       it: Iterator[InternalRow],
       schema: StructType,
@@ -120,16 +122,16 @@ object RowToVeloxColumnarExec {
 
     val arrowSchema =
       SparkArrowUtil.toArrowSchema(schema, SQLConf.get.sessionLocalTimeZone)
-    val jniWrapper = NativeRowToColumnarJniWrapper.create()
+    val runtime = Runtimes.contextInstance(BackendsApiManager.getBackendName, "RowToColumnar")
+    val jniWrapper = NativeRowToColumnarJniWrapper.create(runtime)
     val arrowAllocator = ArrowBufferAllocators.contextInstance()
-    val memoryManager = NativeMemoryManagers.contextInstance("RowToColumnar")
     val cSchema = ArrowSchema.allocateNew(arrowAllocator)
     val factory = UnsafeProjection
     val converter = factory.create(schema)
     val r2cHandle =
       try {
         ArrowAbiUtil.exportSchema(arrowAllocator, arrowSchema, cSchema)
-        jniWrapper.init(cSchema.memoryAddress(), memoryManager.getNativeInstanceHandle)
+        jniWrapper.init(cSchema.memoryAddress())
       } finally {
         cSchema.close()
       }
@@ -145,10 +147,20 @@ object RowToVeloxColumnarExec {
         }
       }
 
-      def nativeConvert(row: UnsafeRow): ColumnarBatch = {
+      def convertToUnsafeRow(row: InternalRow): UnsafeRow = {
+        row match {
+          case unsafeRow: UnsafeRow => unsafeRow
+          case _ =>
+            converter.apply(row)
+        }
+      }
+
+      override def next(): ColumnarBatch = {
+        val firstRow = it.next()
+        val start = System.currentTimeMillis()
+        val row = convertToUnsafeRow(firstRow)
         var arrowBuf: ArrowBuf = null
         TaskResources.addRecycler("RowToColumnar_arrowBuf", 100) {
-          // Remind, remove isOpen here
           if (arrowBuf != null && arrowBuf.refCnt() != 0) {
             arrowBuf.close()
           }
@@ -175,12 +187,14 @@ object RowToVeloxColumnarExec {
         rowLength += sizeInBytes.toLong
         rowCount += 1
 
+        convertTime += System.currentTimeMillis() - start
         while (rowCount < columnBatchSize && !finished) {
           val iterHasNext = it.hasNext
           if (!iterHasNext) {
             finished = true
           } else {
             val row = it.next()
+            val start2 = System.currentTimeMillis()
             val unsafeRow = convertToUnsafeRow(row)
             val sizeInBytes = unsafeRow.getSizeInBytes
             if ((offset + sizeInBytes) > arrowBuf.capacity()) {
@@ -198,39 +212,27 @@ object RowToVeloxColumnarExec {
             offset += sizeInBytes
             rowLength += sizeInBytes.toLong
             rowCount += 1
+            convertTime += System.currentTimeMillis() - start2
           }
         }
         numInputRows += rowCount
+        numOutputBatches += 1
+        val startNative = System.currentTimeMillis()
         try {
           val handle = jniWrapper
             .nativeConvertRowToColumnar(r2cHandle, rowLength.toArray, arrowBuf.memoryAddress())
-          ColumnarBatches.create(Runtimes.contextInstance(), handle)
+          val cb = ColumnarBatches.create(handle)
+          convertTime += System.currentTimeMillis() - startNative
+          cb
         } finally {
           arrowBuf.close()
           arrowBuf = null
         }
       }
-
-      def convertToUnsafeRow(row: InternalRow): UnsafeRow = {
-        row match {
-          case unsafeRow: UnsafeRow => unsafeRow
-          case _ =>
-            converter.apply(row)
-        }
-      }
-
-      override def next(): ColumnarBatch = {
-        val firstRow = it.next()
-        val start = System.currentTimeMillis()
-        val unsafeRow = convertToUnsafeRow(firstRow)
-        val cb = nativeConvert(unsafeRow)
-        numOutputBatches += 1
-        convertTime += System.currentTimeMillis() - start
-        cb
-      }
     }
     Iterators
       .wrap(res)
+      .protectInvocationFlow()
       .recycleIterator {
         jniWrapper.close(r2cHandle)
       }

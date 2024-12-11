@@ -30,19 +30,38 @@ object UTSystemParameters {
   private val TEST_DATA_PATH_KEY = "gluten.test.data.path"
   private val TEST_DATA_PATH_DEFAULT_VALUE = "/data"
 
+  private val TEST_DATA_DISK_OUTPUT_KEY = "gluten.test.disk.output.path"
+  private val TEST_DATA_DISK_OUTPUT_DEFAULT_VALUE = "/"
+
   def testDataPath: String = {
     System.getProperty(
       UTSystemParameters.TEST_DATA_PATH_KEY,
       UTSystemParameters.TEST_DATA_PATH_DEFAULT_VALUE)
   }
+  def diskOutputDataPath: String = {
+    System.getProperty(
+      UTSystemParameters.TEST_DATA_DISK_OUTPUT_KEY,
+      UTSystemParameters.TEST_DATA_DISK_OUTPUT_DEFAULT_VALUE)
+  }
 
   private val TPCDS_DATA_PATH_KEY = "tpcds.data.path"
+  private val TPCDS_DATA_DECIMAL_PATH_KEY = "tpcds.data.decimal.path"
   private val TPCDS_RELATIVE_DATA_PATH = "tpcds-data-sf1"
+  private val TPCDS_DECIMAL_RELATIVE_DATA_PATH = "tpcds-data-sf1-decimal"
 
   def tpcdsDataPath: String = {
     val result = System.getProperty(UTSystemParameters.TPCDS_DATA_PATH_KEY, null)
     if (result == null) {
       s"$testDataPath/$TPCDS_RELATIVE_DATA_PATH"
+    } else {
+      result
+    }
+  }
+
+  def tpcdsDecimalDataPath: String = {
+    val result = System.getProperty(UTSystemParameters.TPCDS_DATA_DECIMAL_PATH_KEY, null)
+    if (result == null) {
+      s"$testDataPath/$TPCDS_DECIMAL_RELATIVE_DATA_PATH"
     } else {
       result
     }

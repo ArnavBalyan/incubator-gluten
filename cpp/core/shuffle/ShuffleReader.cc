@@ -18,7 +18,7 @@
 #include "ShuffleReader.h"
 #include "arrow/ipc/reader.h"
 #include "arrow/record_batch.h"
-#include "utils/macros.h"
+#include "utils/Macros.h"
 
 #include <utility>
 
@@ -44,8 +44,8 @@ int64_t ShuffleReader::getDecompressTime() const {
   return factory_->getDecompressTime();
 }
 
-int64_t ShuffleReader::getIpcTime() const {
-  return ipcTime_;
+ShuffleWriterType ShuffleReader::getShuffleWriterType() const {
+  return factory_->getShuffleWriterType();
 }
 
 int64_t ShuffleReader::getDeserializeTime() const {

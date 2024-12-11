@@ -20,6 +20,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, Row}
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanHelper
 import org.apache.spark.sql.functions.{col, rand, when}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
 import java.io.File
@@ -39,7 +40,7 @@ class GlutenClickHouseDecimalSuite
 
   override protected val tablesPath: String = basePath + "/tpch-data"
   override protected val tpchQueries: String =
-    rootPath + "../../../../gluten-core/src/test/resources/tpch-queries"
+    rootPath + "../../../../tools/gluten-it/common/src/main/resources/tpch-queries"
   override protected val queriesResults: String = rootPath + "queries-output"
   override protected val createNullableTables = true
   override protected def createTPCHNotNullTables(): Unit = {}
@@ -53,7 +54,6 @@ class GlutenClickHouseDecimalSuite
       .set("spark.io.compression.codec", "snappy")
       .set("spark.sql.shuffle.partitions", "5")
       .set("spark.sql.autoBroadcastJoinThreshold", "10MB")
-      .set("spark.sql.decimalOperations.allowPrecisionLoss", "false")
   }
 
   override def beforeAll(): Unit = {
@@ -66,10 +66,10 @@ class GlutenClickHouseDecimalSuite
   private val decimalTable: String = "decimal_table"
   private val decimalTPCHTables: Seq[(DecimalType, Seq[Int])] = Seq.apply(
     (DecimalType.apply(9, 4), Seq()),
-    // 1: ch decimal avg is float
-    (DecimalType.apply(18, 8), Seq(1)),
-    // 1: ch decimal avg is float, 3/10: all value is null and compare with limit
-    (DecimalType.apply(38, 19), Seq(1, 3, 10))
+    (DecimalType.apply(18, 8), Seq()),
+    // 3/10: all value is null and compare with limit
+    // 1 Spark 3.5
+    (DecimalType.apply(38, 19), if (isSparkVersionLE("3.3")) Seq(3, 10) else Seq(3, 10))
   )
 
   private def createDecimalTables(dataType: DecimalType): Unit = {
@@ -301,34 +301,89 @@ class GlutenClickHouseDecimalSuite
       noFallBack = noFallBack)
   }
 
-  Range
-    .inclusive(1, 22)
-    .foreach(
-      sql_num => {
-        decimalTPCHTables.foreach(
-          dt => {
-            val decimalType = dt._1
-            test(s"TPCH Decimal(${decimalType.precision},${decimalType.scale}) Q$sql_num") {
-              var noFallBack = true
-              var compareResult = true
-              if (sql_num == 16 || sql_num == 21) {
-                noFallBack = false
-              }
+  test("from decimalArithmeticOperations.sql") {
+    // prepare
+    val createSql =
+      "create table decimals_test(id int, a decimal(38,18), b decimal(38,18)) using parquet"
+    val inserts =
+      "insert into decimals_test values(1, 100.0, 999.0)" +
+        ", (2, 12345.123, 12345.123)" +
+        ", (3, 0.1234567891011, 1234.1)" +
+        ", (4, 123456789123456789.0, 1.123456789123456789)" +
+        ", (5, 0, 0)" +
+        ", (6, 0, 1.23)" +
+        ", (7, 1.23, 0)"
+    spark.sql(createSql)
 
-              if (dt._2.contains(sql_num)) {
-                compareResult = false
-              }
+    try {
+      spark.sql(inserts)
 
-              spark.sql(s"use decimal_${decimalType.precision}_${decimalType.scale}")
-              runTPCHQuery(
-                sql_num,
-                tpchQueries,
-                compareResult = compareResult,
-                noFallBack = noFallBack) { _ => {} }
-              spark.sql(s"use default")
+      val q1 = "select id, a+b, a-b, a*b, a/b ,a%b from decimals_test order by id"
+
+      // test operations between decimals and constants
+      val q2 = "select id, a*10, b/10 from decimals_test order by id"
+      // FIXME val q2 = "select id, a*10, b/10, a%20, b%30 from decimals_test order by id"
+
+      Seq("true", "false").foreach {
+        allowPrecisionLoss =>
+          withSQLConf((SQLConf.DECIMAL_OPERATIONS_ALLOW_PREC_LOSS.key, allowPrecisionLoss)) {
+            compareResultsAgainstVanillaSpark(q1, compareResult = true, _ => {})
+            compareResultsAgainstVanillaSpark(q2, compareResult = true, _ => {})
+          }
+      }
+    } finally {
+      spark.sql("drop table if exists decimals_test")
+    }
+  }
+
+  test("test castornull") {
+    // prepare
+    val createSql =
+      "create table decimals_cast_test(a decimal(18,8)) using parquet"
+    val inserts =
+      "insert into decimals_cast_test values(123456789.12345678)"
+    spark.sql(createSql)
+
+    try {
+      spark.sql(inserts)
+      val q1 = "select cast(a as decimal(9,2)) from decimals_cast_test"
+      compareResultsAgainstVanillaSpark(q1, compareResult = true, _ => {})
+    } finally {
+      spark.sql("drop table if exists decimals_cast_test")
+    }
+  }
+
+  // FIXME: Support AVG for Decimal Type
+  Seq("true", "false").foreach {
+    allowPrecisionLoss =>
+      Range
+        .inclusive(1, 22)
+        .foreach {
+          sql_num =>
+            {
+              decimalTPCHTables.foreach {
+                dt =>
+                  {
+                    val compareResult = !dt._2.contains(sql_num)
+                    val compare = if (compareResult) "compare" else "noCompare"
+                    val PrecisionLoss = s"allowPrecisionLoss=$allowPrecisionLoss"
+                    val decimalType = dt._1
+                    test(s"""TPCH Decimal(${decimalType.precision},${decimalType.scale})
+                            | Q$sql_num[$PrecisionLoss,native,$compare]""".stripMargin) {
+                      spark.sql(s"use decimal_${decimalType.precision}_${decimalType.scale}")
+                      withSQLConf(
+                        (SQLConf.DECIMAL_OPERATIONS_ALLOW_PREC_LOSS.key, allowPrecisionLoss)) {
+                        runTPCHQuery(sql_num, tpchQueries, compareResult = compareResult) {
+                          _ => {}
+                        }
+                      }
+                      spark.sql(s"use default")
+                    }
+                  }
+              }
             }
-          })
-      })
+        }
+  }
 
   test("fix decimal precision overflow") {
     val sql =
@@ -347,6 +402,18 @@ class GlutenClickHouseDecimalSuite
       sql,
       _ => {}
     )
+  }
+
+  test("GLUTEN-8074 Fix adjust output constant column") {
+    val sql =
+      s"""
+         |select bround(1002.5786, 3),
+         |       bround(-10.8, 0),
+         |       bround(13.888888888889, 5)
+         |from $decimalTable
+         |WHERE bround(cast(decimal_field as decimal(30, 2)), 1) > 0 LIMIT 2;
+         |""".stripMargin
+    runQueryAndCompare(sql)(_ => {})
   }
 
   test("fix decimal32 with negative value") {
@@ -378,6 +445,30 @@ class GlutenClickHouseDecimalSuite
 
     compareResultsAgainstVanillaSpark(sql_nullable, compareResult = true, _ => {})
     compareResultsAgainstVanillaSpark(sql_not_null, compareResult = true, _ => {})
+  }
+
+  test("bigint % 6.1") {
+    val sql =
+      s"""
+         | select
+         |     s_suppkey,
+         |     s_suppkey % 6.1
+         | from supplier
+         |""".stripMargin
+    spark.sql(s"use decimal_${9}_${4}")
+    withSQLConf(vanillaSparkConfs(): _*) {
+      val df2 = spark.sql(sql)
+      print(df2.queryExecution.executedPlan)
+    }
+    testFromRandomBase(
+      sql,
+      _ => {}
+    )
+  }
+
+  test("Fix issue(6015) allow overflow when converting decimal to integer") {
+    val sql = "select int(cast(id * 9999999999 as decimal(29, 2))) from range(10)"
+    runQueryAndCompare(sql)(checkGlutenOperatorMatch[ProjectExecTransformer])
   }
 
   def testFromRandomBase(

@@ -18,7 +18,7 @@
 #include <DataTypes/DataTypeNullable.h>
 #include <DataTypes/IDataType.h>
 #include <Parser/FunctionParser.h>
-#include <Common/CHUtil.h>
+
 
 namespace DB
 {
@@ -35,14 +35,14 @@ namespace local_engine
 class BaseFunctionParserArrayMaxAndMin : public FunctionParser
 {
 public:
-    explicit BaseFunctionParserArrayMaxAndMin(SerializedPlanParser * plan_parser_) : FunctionParser(plan_parser_) { }
+    explicit BaseFunctionParserArrayMaxAndMin(ParserContextPtr parser_context_) : FunctionParser(parser_context_) { }
     ~BaseFunctionParserArrayMaxAndMin() override = default;
 
     const ActionsDAG::Node * parse(
         const substrait::Expression_ScalarFunction & substrait_func,
-        ActionsDAGPtr & actions_dag) const override
+        ActionsDAG & actions_dag) const override
     {
-        auto parsed_args = parseFunctionArguments(substrait_func, "", actions_dag);
+        auto parsed_args = parseFunctionArguments(substrait_func, actions_dag);
         if (parsed_args.size() != 1)
             throw Exception(ErrorCodes::BAD_ARGUMENTS, "Function {} requires exactly one arguments", getName());
 
@@ -68,7 +68,7 @@ public:
 class FunctionParserArrayMax : public BaseFunctionParserArrayMaxAndMin
 {
 public:
-    explicit FunctionParserArrayMax(SerializedPlanParser * plan_parser_) : BaseFunctionParserArrayMaxAndMin(plan_parser_) { }
+    explicit FunctionParserArrayMax(ParserContextPtr parser_context_) : BaseFunctionParserArrayMaxAndMin(parser_context_) { }
     ~FunctionParserArrayMax() override = default;
 
     static constexpr auto name = "array_max";
@@ -81,7 +81,7 @@ static FunctionParserRegister<FunctionParserArrayMax> register_array_max;
 class FunctionParserArrayMin : public BaseFunctionParserArrayMaxAndMin
 {
 public:
-    explicit FunctionParserArrayMin(SerializedPlanParser * plan_parser_) : BaseFunctionParserArrayMaxAndMin(plan_parser_) { }
+    explicit FunctionParserArrayMin(ParserContextPtr parser_context_) : BaseFunctionParserArrayMaxAndMin(parser_context_) { }
     ~FunctionParserArrayMin() override = default;
 
     static constexpr auto name = "array_min";

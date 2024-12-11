@@ -17,10 +17,11 @@
 
 #include "VeloxColumnarBatchSerializer.h"
 
+#include <arrow/buffer.h>
+
 #include "memory/ArrowMemory.h"
 #include "memory/VeloxColumnarBatch.h"
 #include "velox/common/memory/Memory.h"
-#include "velox/vector/ComplexVector.h"
 #include "velox/vector/FlatVector.h"
 #include "velox/vector/arrow/Bridge.h"
 
@@ -29,21 +30,22 @@
 using namespace facebook::velox;
 
 namespace gluten {
-
 namespace {
+
 std::unique_ptr<ByteInputStream> toByteStream(uint8_t* data, int32_t size) {
   std::vector<ByteRange> byteRanges;
   byteRanges.push_back(ByteRange{data, size, 0});
-  auto byteStream = std::make_unique<ByteInputStream>(byteRanges);
+  auto byteStream = std::make_unique<BufferInputStream>(byteRanges);
   return byteStream;
 }
+
 } // namespace
 
 VeloxColumnarBatchSerializer::VeloxColumnarBatchSerializer(
     arrow::MemoryPool* arrowPool,
     std::shared_ptr<memory::MemoryPool> veloxPool,
     struct ArrowSchema* cSchema)
-    : ColumnarBatchSerializer(arrowPool, cSchema), veloxPool_(std::move(veloxPool)) {
+    : ColumnarBatchSerializer(arrowPool), veloxPool_(std::move(veloxPool)) {
   // serializeColumnarBatches don't need rowType_
   if (cSchema != nullptr) {
     rowType_ = asRowType(importFromArrow(*cSchema));
@@ -88,4 +90,5 @@ std::shared_ptr<ColumnarBatch> VeloxColumnarBatchSerializer::deserialize(uint8_t
   serde_->deserialize(byteStream.get(), veloxPool_.get(), rowType_, &result, &options_);
   return std::make_shared<VeloxColumnarBatch>(result);
 }
+
 } // namespace gluten

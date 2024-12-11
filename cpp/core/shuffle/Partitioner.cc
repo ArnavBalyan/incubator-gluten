@@ -18,12 +18,14 @@
 #include "shuffle/Partitioner.h"
 #include "shuffle/FallbackRangePartitioner.h"
 #include "shuffle/HashPartitioner.h"
+#include "shuffle/RandomPartitioner.h"
 #include "shuffle/RoundRobinPartitioner.h"
 #include "shuffle/SinglePartitioner.h"
+#include "utils/Exception.h"
 
 namespace gluten {
 
-arrow::Result<std::shared_ptr<Partitioner>>
+std::shared_ptr<Partitioner>
 Partitioner::make(Partitioning partitioning, int32_t numPartitions, int32_t startPartitionId) {
   switch (partitioning) {
     case Partitioning::kHash:
@@ -34,8 +36,10 @@ Partitioner::make(Partitioning partitioning, int32_t numPartitions, int32_t star
       return std::make_shared<SinglePartitioner>();
     case Partitioning::kRange:
       return std::make_shared<FallbackRangePartitioner>(numPartitions);
+    case Partitioning::kRandom:
+      return std::make_shared<RandomPartitioner>(numPartitions);
     default:
-      return arrow::Status::Invalid("Unsupported partitioning type: " + std::to_string(partitioning));
+      throw GlutenException("Unsupported partitioning type: " + std::to_string(partitioning));
   }
 }
 

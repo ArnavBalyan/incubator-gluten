@@ -42,6 +42,10 @@ abstract class BatchScanExecShim(
   // Note: "metrics" is made transient to avoid sending driver-side metrics to tasks.
   @transient override lazy val metrics: Map[String, SQLMetric] = Map()
 
+  def metadataColumns: Seq[AttributeReference] = Seq.empty
+
+  def hasUnsupportedColumns: Boolean = false
+
   override def doExecuteColumnar(): RDD[ColumnarBatch] = {
     throw new UnsupportedOperationException("Need to implement this method")
   }
@@ -92,4 +96,8 @@ abstract class BatchScanExecShim(
       Boolean.box(replicatePartitions)
     )
   }
+}
+
+abstract class ArrowBatchScanExecShim(original: BatchScanExec) extends DataSourceV2ScanExecBase {
+  @transient override lazy val partitions: Seq[InputPartition] = original.partitions
 }

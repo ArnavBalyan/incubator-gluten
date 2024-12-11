@@ -35,7 +35,7 @@ class SparkDirectoryUtil private (val roots: Array[String]) extends Logging {
     rootDir =>
       try {
         val localDir = Utils.createDirectory(rootDir, "gluten")
-        GlutenShutdownManager.addHookForTempDirRemoval(
+        SparkShutdownManagerUtil.addHookForTempDirRemoval(
           () => {
             try FileUtils.forceDelete(localDir)
             catch {
@@ -79,7 +79,7 @@ object SparkDirectoryUtil extends Logging {
       return
     }
     if (INSTANCE.roots.toSet != roots.toSet) {
-      logWarning(
+      throw new IllegalArgumentException(
         s"Reinitialize SparkDirectoryUtil with different root dirs: old: ${INSTANCE.ROOTS
             .mkString("Array(", ", ", ")")}, new: ${roots.mkString("Array(", ", ", ")")}"
       )

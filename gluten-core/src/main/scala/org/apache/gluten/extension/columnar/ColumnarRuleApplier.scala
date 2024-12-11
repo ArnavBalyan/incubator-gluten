@@ -16,8 +16,23 @@
  */
 package org.apache.gluten.extension.columnar
 
+import org.apache.gluten.GlutenConfig
+import org.apache.gluten.extension.util.AdaptiveContext
+
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.SparkPlan
 
 trait ColumnarRuleApplier {
   def apply(plan: SparkPlan, outputsColumnar: Boolean): SparkPlan
+}
+
+object ColumnarRuleApplier {
+  class ColumnarRuleCall(
+      val session: SparkSession,
+      val ac: AdaptiveContext,
+      val outputsColumnar: Boolean) {
+    val glutenConf: GlutenConfig = {
+      new GlutenConfig(session.sessionState.conf)
+    }
+  }
 }

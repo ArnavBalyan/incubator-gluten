@@ -16,8 +16,9 @@
  */
 package org.apache.spark.sql.execution
 
+import org.apache.gluten.backendsapi.BackendsApiManager
 import org.apache.gluten.columnarbatch.ColumnarBatches
-import org.apache.gluten.memory.nmm.NativeMemoryManagers
+import org.apache.gluten.runtime.Runtimes
 import org.apache.gluten.sql.shims.SparkShimLoader
 import org.apache.gluten.vectorized.{ColumnarBatchSerializeResult, ColumnarBatchSerializerJniWrapper}
 
@@ -29,9 +30,8 @@ import org.apache.spark.sql.catalyst.plans.physical.{BroadcastMode, BroadcastPar
 import org.apache.spark.sql.execution.joins.{HashedRelation, HashedRelationBroadcastMode, LongHashedRelation}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.vectorized.ColumnarBatch
-import org.apache.spark.util.TaskResources
+import org.apache.spark.task.TaskResources
 
-import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer;
 
 // Utility methods to convert Vanilla broadcast relations from/to Velox broadcast relations.
@@ -106,7 +106,8 @@ object BroadcastUtils {
           }
           ColumnarBuildSideRelation(
             SparkShimLoader.getSparkShims.attributesFromStruct(schema),
-            serialized)
+            serialized,
+            mode)
         }
         // Rebroadcast Velox relation.
         context.broadcast(toRelation).asInstanceOf[Broadcast[T]]
@@ -124,7 +125,8 @@ object BroadcastUtils {
           }
           ColumnarBuildSideRelation(
             SparkShimLoader.getSparkShims.attributesFromStruct(schema),
-            serialized)
+            serialized,
+            mode)
         }
         // Rebroadcast Velox relation.
         context.broadcast(toRelation).asInstanceOf[Broadcast[T]]
@@ -153,17 +155,15 @@ object BroadcastUtils {
     if (filtered.isEmpty) {
       return ColumnarBatchSerializeResult.EMPTY
     }
-    val batchRuntime = ColumnarBatches.getRuntime(filtered.toList.asJava)
-    val handleArray = filtered.map(ColumnarBatches.getNativeHandle)
+    val handleArray =
+      filtered.map(b => ColumnarBatches.getNativeHandle(BackendsApiManager.getBackendName, b))
     val serializeResult =
       try {
         ColumnarBatchSerializerJniWrapper
-          .forRuntime(batchRuntime)
-          .serialize(
-            handleArray,
-            NativeMemoryManagers
-              .contextInstance("BroadcastRelation")
-              .getNativeInstanceHandle)
+          .create(
+            Runtimes
+              .contextInstance(BackendsApiManager.getBackendName, "BroadcastUtils#serializeStream"))
+          .serialize(handleArray)
       } finally {
         filtered.foreach(ColumnarBatches.release)
       }

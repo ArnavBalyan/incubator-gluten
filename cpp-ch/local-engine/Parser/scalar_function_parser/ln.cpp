@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 #include <Parser/scalar_function_parser/logarithm.h>
+#include <Parser/ExpressionParser.h>
 
 namespace local_engine
 {
@@ -22,14 +23,14 @@ namespace local_engine
 class FunctionParserLn : public FunctionParserLogBase
 {
 public:
-    explicit FunctionParserLn(SerializedPlanParser * plan_parser_) : FunctionParserLogBase(plan_parser_) {}
+    explicit FunctionParserLn(ParserContextPtr parser_context_) : FunctionParserLogBase(parser_context_) {}
     ~FunctionParserLn() override = default;
 
-    static constexpr auto name = "log";
+    static constexpr auto name = "ln";
 
     String getName() const override { return name; }
     String getCHFunctionName() const override { return name; }
-    const DB::ActionsDAG::Node * getParameterLowerBound(ActionsDAGPtr & actions_dag, const DataTypePtr & data_type) const override
+    const DB::ActionsDAG::Node * getParameterLowerBound(ActionsDAG & actions_dag, const DataTypePtr & data_type) const override
     {
         return addColumnToActionsDAG(actions_dag, data_type, 0.0);
     }

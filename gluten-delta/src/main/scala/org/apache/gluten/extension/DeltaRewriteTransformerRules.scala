@@ -16,22 +16,23 @@
  */
 package org.apache.gluten.extension
 
-import org.apache.gluten.execution.{DeltaScanTransformer, ProjectExecTransformer}
-import org.apache.gluten.extension.DeltaRewriteTransformerRules.columnMappingRule
+import org.apache.gluten.execution.{DeltaFilterExecTransformer, DeltaProjectExecTransformer, DeltaScanTransformer, ProjectExecTransformer}
+import org.apache.gluten.extension.DeltaRewriteTransformerRules.{columnMappingRule, filterRule, projectRule, pushDownInputFileExprRule}
 import org.apache.gluten.extension.columnar.RewriteTransformerRules
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference}
+import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, Expression, InputFileBlockLength, InputFileBlockStart, InputFileName}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaParquetFileFormat, NoMapping}
-import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.{FilterExec, ProjectExec, SparkPlan}
 import org.apache.spark.sql.execution.datasources.FileFormat
 
-import scala.collection._
+import scala.collection.mutable.ListBuffer
 
 class DeltaRewriteTransformerRules extends RewriteTransformerRules {
-  override def rules: Seq[Rule[SparkPlan]] = columnMappingRule :: Nil
+  override def rules: Seq[Rule[SparkPlan]] =
+    columnMappingRule :: filterRule :: projectRule :: pushDownInputFileExprRule :: Nil
 }
 
 object DeltaRewriteTransformerRules {
@@ -58,11 +59,44 @@ object DeltaRewriteTransformerRules {
         transformColumnMappingPlan(p)
     }
 
+  val filterRule: Rule[SparkPlan] = (plan: SparkPlan) =>
+    plan.transformUp {
+      case FilterExec(condition, child) if containsIncrementMetricExpr(condition) =>
+        DeltaFilterExecTransformer(condition, child)
+    }
+
+  val projectRule: Rule[SparkPlan] = (plan: SparkPlan) =>
+    plan.transformUp {
+      case ProjectExec(projectList, child) if projectList.exists(containsIncrementMetricExpr) =>
+        DeltaProjectExecTransformer(projectList, child)
+    }
+
+  val pushDownInputFileExprRule: Rule[SparkPlan] = (plan: SparkPlan) =>
+    plan.transformUp {
+      case p @ ProjectExec(projectList, child: DeltaScanTransformer)
+          if projectList.exists(containsInputFileRelatedExpr) =>
+        child.copy(output = p.output)
+    }
+
   private def isDeltaColumnMappingFileFormat(fileFormat: FileFormat): Boolean = fileFormat match {
     case d: DeltaParquetFileFormat if d.columnMappingMode != NoMapping =>
       true
     case _ =>
       false
+  }
+
+  private def containsInputFileRelatedExpr(expr: Expression): Boolean = {
+    expr match {
+      case _: InputFileName | _: InputFileBlockStart | _: InputFileBlockLength => true
+      case _ => expr.children.exists(containsInputFileRelatedExpr)
+    }
+  }
+
+  private def containsIncrementMetricExpr(expr: Expression): Boolean = {
+    expr match {
+      case e if e.prettyName == "increment_metric" => true
+      case _ => expr.children.exists(containsIncrementMetricExpr)
+    }
   }
 
   /**
@@ -87,8 +121,8 @@ object DeltaRewriteTransformerRules {
       )(SparkSession.active)
       // transform output's name into physical name so Reader can read data correctly
       // should keep the columns order the same as the origin output
-      val originColumnNames = mutable.ListBuffer.empty[String]
-      val transformedAttrs = mutable.ListBuffer.empty[Attribute]
+      val originColumnNames = ListBuffer.empty[String]
+      val transformedAttrs = ListBuffer.empty[Attribute]
       def mapAttribute(attr: Attribute) = {
         val newAttr = if (!plan.isMetadataColumn(attr)) {
           DeltaColumnMapping
@@ -142,7 +176,7 @@ object DeltaRewriteTransformerRules {
       val expr = (transformedAttrs, originColumnNames).zipped.map {
         (attr, columnName) => Alias(attr, columnName)(exprId = attr.exprId)
       }
-      val projectExecTransformer = ProjectExecTransformer(expr, scanExecTransformer)
+      val projectExecTransformer = ProjectExecTransformer(expr.toSeq, scanExecTransformer)
       projectExecTransformer
     case _ => plan
   }

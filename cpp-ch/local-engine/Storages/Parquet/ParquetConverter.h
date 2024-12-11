@@ -15,39 +15,105 @@
  * limitations under the License.
  */
 #pragma once
+#include <Columns/ColumnDecimal.h>
 #include <Core/Field.h>
+#include <base/Decimal_fwd.h>
+#include <parquet/schema.h>
 #include <parquet/statistics.h>
 #include <parquet/types.h>
 #include <Common/PODArray.h>
 
+namespace DB::ErrorCodes
+{
+extern const int LOGICAL_ERROR;
+}
+
 namespace local_engine
 {
+
 template <typename PhysicalType>
-auto parquetCast(const DB::Field & value) -> typename PhysicalType::c_type
+struct ToParquet
 {
     using T = typename PhysicalType::c_type;
-    if constexpr (std::is_same_v<PhysicalType, parquet::Int32Type>)
-        return static_cast<T>(value.get<Int64>());
-    else if constexpr (std::is_same_v<PhysicalType, parquet::ByteArrayType>)
+    T as(const DB::Field & value, const parquet::ColumnDescriptor & s)
+    {
+        if (s.logical_type()->is_decimal())
+        {
+            if constexpr (std::is_same_v<PhysicalType, parquet::Int32Type>)
+            {
+                const auto v = value.safeGet<DB::DecimalField<DB::Decimal32>>();
+                return v.getValue().value;
+            }
+            if constexpr (std::is_same_v<PhysicalType, parquet::Int64Type>)
+            {
+                const auto v = value.safeGet<DB::DecimalField<DB::Decimal64>>();
+                return v.getValue().value;
+            }
+        }
+        // parquet::BooleanType, parquet::Int64Type, parquet::FloatType, parquet::DoubleType
+        return value.safeGet<T>(); // FLOAT, DOUBLE, INT64, Int32
+    }
+};
+
+template <>
+struct ToParquet<parquet::ByteArrayType>
+{
+    using T = parquet::ByteArray;
+    T as(const DB::Field & value, const parquet::ColumnDescriptor &)
     {
         assert(value.getType() == DB::Field::Types::String);
-        const std::string & s = value.get<std::string>();
+        const std::string & s = value.safeGet<std::string>();
         const auto * const ptr = reinterpret_cast<const uint8_t *>(s.data());
         return parquet::ByteArray(static_cast<uint32_t>(s.size()), ptr);
     }
-    else if constexpr (std::is_same_v<PhysicalType, parquet::FLBAType>)
-    {
-        abort();
-    }
-    else
-        return value.get<T>(); // FLOAT, DOUBLE, INT64
+};
+
+template <typename T>
+parquet::FixedLenByteArray convertField(const DB::Field & value, uint8_t * buf, size_t type_length)
+{
+    assert(sizeof(T) >= type_length);
+
+    T val = value.safeGet<DB::DecimalField<DB::Decimal<T>>>().getValue().value;
+    std::reverse(reinterpret_cast<char *>(&val), reinterpret_cast<char *>(&val) + sizeof(T));
+    const int offset = sizeof(T) - type_length;
+
+    memcpy(buf, reinterpret_cast<char *>(&val) + offset, type_length);
+    return parquet::FixedLenByteArray(buf);
 }
+
+template <>
+struct ToParquet<parquet::FLBAType>
+{
+    uint8_t buf[16];
+    using T = parquet::FixedLenByteArray;
+    T as(const DB::Field & value, const parquet::ColumnDescriptor & descriptor)
+    {
+        if (value.getType() == DB::Field::Types::Decimal256)
+            throw DB::Exception(DB::ErrorCodes::LOGICAL_ERROR, "Field type '{}' is not supported", value.getTypeName());
+
+        static_assert(sizeof(Int128) == sizeof(buf));
+
+        if (descriptor.type_length() > sizeof(buf))
+            throw DB::Exception(
+                DB::ErrorCodes::LOGICAL_ERROR,
+                "descriptor.type_length() = {} , which is > {}, e.g. sizeof(buf)",
+                descriptor.type_length(),
+                sizeof(buf));
+
+        if (value.getType() == DB::Field::Types::Decimal32)
+            return convertField<Int32>(value, buf, descriptor.type_length());
+        if (value.getType() == DB::Field::Types::Decimal64)
+            return convertField<Int64>(value, buf, descriptor.type_length());
+
+        return convertField<Int128>(value, buf, descriptor.type_length());
+    }
+};
 
 // Int32 Int64 Float Double
 template <typename DType, typename Col>
 struct ConverterNumeric
 {
-    using From = typename Col::Container::value_type;
+    using From = typename Col::ValueType;
     using To = typename DType::c_type;
 
     const Col & column;
@@ -80,6 +146,7 @@ using ConverterInt64 = ConverterNumeric<parquet::Int64Type, DB::ColumnVector<Int
 using ConverterInt64_u = ConverterNumeric<parquet::Int64Type, DB::ColumnVector<UInt64>>;
 
 using ConverterDouble = ConverterNumeric<parquet::DoubleType, DB::ColumnVector<Float64>>;
+using ConverterFloat = ConverterNumeric<parquet::FloatType, DB::ColumnVector<Float32>>;
 
 struct ConverterString
 {
@@ -100,6 +167,49 @@ struct ConverterString
     }
 };
 
+/// Like ConverterNumberAsFixedString, but converts to big-endian. Because that's the byte order
+/// Parquet uses for decimal types and literally nothing else, for some reason.
+template <DB::is_decimal T>
+struct ConverterDecimal
+{
+    const parquet::ColumnDescriptor & descriptor;
+    const DB::ColumnDecimal<T> & column;
+    DB::PODArray<uint8_t> data_buf;
+    DB::PODArray<parquet::FixedLenByteArray> ptr_buf;
+
+    explicit ConverterDecimal(const DB::ColumnPtr & c, const parquet::ColumnDescriptor & desc)
+        : descriptor(desc), column(assert_cast<const DB::ColumnDecimal<T> &>(*c))
+    {
+        if (descriptor.type_length() > sizeof(T))
+            throw DB::Exception(
+                DB::ErrorCodes::LOGICAL_ERROR,
+                "descriptor.type_length() = {} , which is > {}, e.g. sizeof(T)",
+                descriptor.type_length(),
+                sizeof(T));
+    }
+
+    const parquet::FixedLenByteArray * getBatch(size_t offset, size_t count)
+    {
+        data_buf.resize(count * sizeof(T));
+        ptr_buf.resize(count);
+        memcpy(data_buf.data(), reinterpret_cast<const char *>(column.getData().data() + offset), count * sizeof(T));
+        const size_t offset_in_buf = sizeof(T) - descriptor.type_length();
+        ;
+        for (size_t i = 0; i < count; ++i)
+        {
+            std::reverse(data_buf.data() + i * sizeof(T), data_buf.data() + (i + 1) * sizeof(T));
+            ptr_buf[i].ptr = data_buf.data() + i * sizeof(T) + offset_in_buf;
+        }
+        return ptr_buf.data();
+    }
+};
+
+using Decimal128ToFLB = ConverterDecimal<DB::Decimal128>;
+using Decimal64ToFLB = ConverterDecimal<DB::Decimal64>;
+using Decimal32ToFLB = ConverterDecimal<DB::Decimal32>;
+
+using ConverterDecimal32 = ConverterNumeric<parquet::Int32Type, DB::ColumnDecimal<DB::Decimal32>>;
+using ConverterDecimal64 = ConverterNumeric<parquet::Int64Type, DB::ColumnDecimal<DB::Decimal64>>;
 
 class BaseConverter
 {
@@ -115,7 +225,7 @@ protected:
 
 public:
     virtual const T * getBatch(size_t offset, size_t count) = 0;
-    static std::shared_ptr<ParquetConverter<DType>> Make(const DB::ColumnPtr & c);
+    static std::shared_ptr<ParquetConverter<DType>> Make(const DB::ColumnPtr & c, const parquet::ColumnDescriptor & desc);
 };
 
 template <typename DType, typename CONVERT>
@@ -134,7 +244,7 @@ private:
 
 
 template <typename DType>
-std::shared_ptr<ParquetConverter<DType>> ParquetConverter<DType>::Make(const DB::ColumnPtr & c)
+std::shared_ptr<ParquetConverter<DType>> ParquetConverter<DType>::Make(const DB::ColumnPtr & c, const parquet::ColumnDescriptor & desc)
 {
     std::shared_ptr<BaseConverter> result;
 
@@ -164,6 +274,8 @@ std::shared_ptr<ParquetConverter<DType>> ParquetConverter<DType>::Make(const DB:
                 case TypeIndex::UInt32:
                     result = std::make_shared<ParquetConverterImpl<parquet::Int32Type, ConverterInt32_u>>(ConverterInt32_u(c));
                     break;
+                case TypeIndex::Decimal32:
+                    result = std::make_shared<ParquetConverterImpl<parquet::Int32Type, ConverterDecimal32>>(ConverterDecimal32(c));
                 default:
                     break;
             }
@@ -176,6 +288,8 @@ std::shared_ptr<ParquetConverter<DType>> ParquetConverter<DType>::Make(const DB:
                 case TypeIndex::UInt64:
                     result = std::make_shared<ParquetConverterImpl<parquet::Int64Type, ConverterInt64_u>>(ConverterInt64_u(c));
                     break;
+                case TypeIndex::Decimal64:
+                    result = std::make_shared<ParquetConverterImpl<parquet::Int64Type, ConverterDecimal64>>(ConverterDecimal64(c));
                 default:
                     break;
             }
@@ -183,6 +297,14 @@ std::shared_ptr<ParquetConverter<DType>> ParquetConverter<DType>::Make(const DB:
         case parquet::Type::INT96:
             break;
         case parquet::Type::FLOAT:
+            switch (c->getDataType())
+            {
+                case TypeIndex::Float32:
+                    result = std::make_shared<ParquetConverterImpl<parquet::FloatType, ConverterFloat>>(ConverterFloat(c));
+                    break;
+                default:
+                    break;
+            }
             break;
         case parquet::Type::DOUBLE:
             switch (c->getDataType())
@@ -199,6 +321,22 @@ std::shared_ptr<ParquetConverter<DType>> ParquetConverter<DType>::Make(const DB:
             {
                 case TypeIndex::String:
                     result = std::make_shared<ParquetConverterImpl<parquet::ByteArrayType, ConverterString>>(ConverterString(c));
+                    break;
+                default:
+                    break;
+            }
+            break;
+        case parquet::Type::FIXED_LEN_BYTE_ARRAY:
+            switch (c->getDataType())
+            {
+                case TypeIndex::Decimal128:
+                    result = std::make_shared<ParquetConverterImpl<parquet::FLBAType, Decimal128ToFLB>>(Decimal128ToFLB(c, desc));
+                    break;
+                case TypeIndex::Decimal64:
+                    result = std::make_shared<ParquetConverterImpl<parquet::FLBAType, Decimal64ToFLB>>(Decimal64ToFLB(c, desc));
+                    break;
+                case TypeIndex::Decimal32:
+                    result = std::make_shared<ParquetConverterImpl<parquet::FLBAType, Decimal32ToFLB>>(Decimal32ToFLB(c, desc));
                     break;
                 default:
                     break;

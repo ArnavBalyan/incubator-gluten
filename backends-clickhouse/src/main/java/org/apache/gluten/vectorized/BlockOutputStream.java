@@ -38,6 +38,7 @@ public class BlockOutputStream implements Closeable {
       SQLMetric dataSize,
       boolean compressionEnable,
       String defaultCompressionCodec,
+      int defaultCompressionLevel,
       int bufferSize) {
     OutputStream unwrapOutputStream =
         CHShuffleWriteStreamFactory.unwrapSparkCompressionOutputStream(
@@ -50,7 +51,12 @@ public class BlockOutputStream implements Closeable {
     }
     this.instance =
         nativeCreate(
-            this.outputStream, buffer, defaultCompressionCodec, compressionEnable, bufferSize);
+            this.outputStream,
+            buffer,
+            defaultCompressionCodec,
+            defaultCompressionLevel,
+            compressionEnable,
+            bufferSize);
     this.dataSize = dataSize;
   }
 
@@ -58,6 +64,7 @@ public class BlockOutputStream implements Closeable {
       OutputStream outputStream,
       byte[] buffer,
       String defaultCompressionCodec,
+      int defaultCompressionLevel,
       boolean compressionEnable,
       int bufferSize);
 
@@ -68,6 +75,7 @@ public class BlockOutputStream implements Closeable {
   private native void nativeFlush(long instance);
 
   public void write(ColumnarBatch cb) {
+    if (cb.numCols() == 0 || cb.numRows() == 0) return;
     CHNativeBlock block = CHNativeBlock.fromColumnarBatch(cb);
     dataSize.add(block.totalBytes());
     nativeWrite(instance, block.blockAddress());

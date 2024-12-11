@@ -19,12 +19,10 @@
 
 #include "ConfigExtractor.h"
 #include <stdexcept>
-#ifdef ENABLE_GCS
-#include <fstream>
-#endif
 
-#include "utils/exception.h"
+#include "utils/Exception.h"
 #include "velox/connectors/hive/HiveConfig.h"
+#include "velox/connectors/hive/storage_adapters/s3fs/S3Config.h"
 
 namespace {
 
@@ -34,6 +32,13 @@ const bool kVeloxFileHandleCacheEnabledDefault = false;
 // Log granularity of AWS C++ SDK
 const std::string kVeloxAwsSdkLogLevel = "spark.gluten.velox.awsSdkLogLevel";
 const std::string kVeloxAwsSdkLogLevelDefault = "FATAL";
+// Retry mode for AWS s3
+const std::string kVeloxS3RetryMode = "spark.gluten.velox.fs.s3a.retry.mode";
+const std::string kVeloxS3RetryModeDefault = "legacy";
+// Connection timeout for AWS s3
+const std::string kVeloxS3ConnectTimeout = "spark.gluten.velox.fs.s3a.connect.timeout";
+// Using default fs.s3a.connection.timeout value in hadoop
+const std::string kVeloxS3ConnectTimeoutDefault = "200s";
 } // namespace
 
 namespace gluten {
@@ -52,9 +57,9 @@ std::string getConfigValue(
   return got->second;
 }
 
-std::shared_ptr<facebook::velox::core::MemConfigMutable> getHiveConfig(
-    const std::shared_ptr<const facebook::velox::Config>& conf) {
-  auto hiveConf = std::make_shared<facebook::velox::core::MemConfigMutable>();
+std::shared_ptr<facebook::velox::config::ConfigBase> getHiveConfig(
+    std::shared_ptr<facebook::velox::config::ConfigBase> conf) {
+  std::unordered_map<std::string, std::string> hiveConfMap;
 
 #ifdef ENABLE_S3
   std::string awsAccessKey = conf->get<std::string>("spark.hadoop.fs.s3a.access.key", "");
@@ -65,6 +70,10 @@ std::shared_ptr<facebook::velox::core::MemConfigMutable> getHiveConfig(
   bool useInstanceCredentials = conf->get<bool>("spark.hadoop.fs.s3a.use.instance.credentials", false);
   std::string iamRole = conf->get<std::string>("spark.hadoop.fs.s3a.iam.role", "");
   std::string iamRoleSessionName = conf->get<std::string>("spark.hadoop.fs.s3a.iam.role.session.name", "");
+  std::string retryMaxAttempts = conf->get<std::string>("spark.hadoop.fs.s3a.retry.limit", "20");
+  std::string retryMode = conf->get<std::string>(kVeloxS3RetryMode, kVeloxS3RetryModeDefault);
+  std::string maxConnections = conf->get<std::string>("spark.hadoop.fs.s3a.connection.maximum", "15");
+  std::string connectTimeout = conf->get<std::string>(kVeloxS3ConnectTimeout, kVeloxS3ConnectTimeoutDefault);
 
   std::string awsSdkLogLevel = conf->get<std::string>(kVeloxAwsSdkLogLevel, kVeloxAwsSdkLogLevelDefault);
 
@@ -80,60 +89,85 @@ std::shared_ptr<facebook::velox::core::MemConfigMutable> getHiveConfig(
   if (envAwsEndpoint != nullptr) {
     awsEndpoint = std::string(envAwsEndpoint);
   }
+  const char* envRetryMaxAttempts = std::getenv("AWS_MAX_ATTEMPTS");
+  if (envRetryMaxAttempts != nullptr) {
+    retryMaxAttempts = std::string(envRetryMaxAttempts);
+  }
+  const char* envRetryMode = std::getenv("AWS_RETRY_MODE");
+  if (envRetryMode != nullptr) {
+    retryMode = std::string(envRetryMode);
+  }
 
   if (useInstanceCredentials) {
-    hiveConf->setValue(facebook::velox::connector::hive::HiveConfig::kS3UseInstanceCredentials, "true");
+    hiveConfMap[facebook::velox::filesystems::S3Config::baseConfigKey(
+        facebook::velox::filesystems::S3Config::Keys::kUseInstanceCredentials)] = "true";
   } else if (!iamRole.empty()) {
-    hiveConf->setValue(facebook::velox::connector::hive::HiveConfig::kS3IamRole, iamRole);
+    hiveConfMap[facebook::velox::filesystems::S3Config::baseConfigKey(
+        facebook::velox::filesystems::S3Config::Keys::kIamRole)] = iamRole;
     if (!iamRoleSessionName.empty()) {
-      hiveConf->setValue(facebook::velox::connector::hive::HiveConfig::kS3IamRoleSessionName, iamRoleSessionName);
+      hiveConfMap[facebook::velox::filesystems::S3Config::baseConfigKey(
+          facebook::velox::filesystems::S3Config::Keys::kIamRoleSessionName)] = iamRoleSessionName;
     }
   } else {
-    hiveConf->setValue(facebook::velox::connector::hive::HiveConfig::kS3AwsAccessKey, awsAccessKey);
-    hiveConf->setValue(facebook::velox::connector::hive::HiveConfig::kS3AwsSecretKey, awsSecretKey);
+    hiveConfMap[facebook::velox::filesystems::S3Config::baseConfigKey(
+        facebook::velox::filesystems::S3Config::Keys::kAccessKey)] = awsAccessKey;
+    hiveConfMap[facebook::velox::filesystems::S3Config::baseConfigKey(
+        facebook::velox::filesystems::S3Config::Keys::kSecretKey)] = awsSecretKey;
   }
   // Only need to set s3 endpoint when not use instance credentials.
   if (!useInstanceCredentials) {
-    hiveConf->setValue(facebook::velox::connector::hive::HiveConfig::kS3Endpoint, awsEndpoint);
+    hiveConfMap[facebook::velox::filesystems::S3Config::baseConfigKey(
+        facebook::velox::filesystems::S3Config::Keys::kEndpoint)] = awsEndpoint;
   }
-  hiveConf->setValue(facebook::velox::connector::hive::HiveConfig::kS3SSLEnabled, sslEnabled ? "true" : "false");
-  hiveConf->setValue(
-      facebook::velox::connector::hive::HiveConfig::kS3PathStyleAccess, pathStyleAccess ? "true" : "false");
-  hiveConf->setValue(facebook::velox::connector::hive::HiveConfig::kS3LogLevel, awsSdkLogLevel);
+  hiveConfMap[facebook::velox::filesystems::S3Config::baseConfigKey(
+      facebook::velox::filesystems::S3Config::Keys::kSSLEnabled)] = sslEnabled ? "true" : "false";
+  hiveConfMap[facebook::velox::filesystems::S3Config::baseConfigKey(
+      facebook::velox::filesystems::S3Config::Keys::kPathStyleAccess)] = pathStyleAccess ? "true" : "false";
+  hiveConfMap[facebook::velox::filesystems::S3Config::kS3LogLevel] = awsSdkLogLevel;
+  hiveConfMap[facebook::velox::filesystems::S3Config::baseConfigKey(
+      facebook::velox::filesystems::S3Config::Keys::kMaxAttempts)] = retryMaxAttempts;
+  hiveConfMap[facebook::velox::filesystems::S3Config::baseConfigKey(
+      facebook::velox::filesystems::S3Config::Keys::kRetryMode)] = retryMode;
+  hiveConfMap[facebook::velox::filesystems::S3Config::baseConfigKey(
+      facebook::velox::filesystems::S3Config::Keys::kMaxConnections)] = maxConnections;
+  hiveConfMap[facebook::velox::filesystems::S3Config::baseConfigKey(
+      facebook::velox::filesystems::S3Config::Keys::kConnectTimeout)] = connectTimeout;
 #endif
 
 #ifdef ENABLE_GCS
   // https://github.com/GoogleCloudDataproc/hadoop-connectors/blob/master/gcs/CONFIGURATION.md#api-client-configuration
-  auto gsStorageRootUrl = conf->get("spark.hadoop.fs.gs.storage.root.url");
+  auto gsStorageRootUrl = conf->get<std::string>("spark.hadoop.fs.gs.storage.root.url");
   if (gsStorageRootUrl.hasValue()) {
-    std::string url = gsStorageRootUrl.value();
-    std::string gcsScheme;
-    std::string gcsEndpoint;
+    std::string gcsEndpoint = gsStorageRootUrl.value();
 
-    const auto sep = std::string("://");
-    const auto pos = url.find_first_of(sep);
-    if (pos != std::string::npos) {
-      gcsScheme = url.substr(0, pos);
-      gcsEndpoint = url.substr(pos + sep.length());
-    }
-
-    if (!gcsEndpoint.empty() && !gcsScheme.empty()) {
-      hiveConf->setValue(facebook::velox::connector::hive::HiveConfig::kGCSScheme, gcsScheme);
-      hiveConf->setValue(facebook::velox::connector::hive::HiveConfig::kGCSEndpoint, gcsEndpoint);
+    if (!gcsEndpoint.empty()) {
+      hiveConfMap[facebook::velox::connector::hive::HiveConfig::kGcsEndpoint] = gcsEndpoint;
     }
   }
 
+  // https://github.com/GoogleCloudDataproc/hadoop-connectors/blob/master/gcs/CONFIGURATION.md#http-transport-configuration
+  // https://cloud.google.com/cpp/docs/reference/storage/latest/classgoogle_1_1cloud_1_1storage_1_1LimitedErrorCountRetryPolicy
+  auto gsMaxRetryCount = conf->get<std::string>("spark.hadoop.fs.gs.http.max.retry");
+  if (gsMaxRetryCount.hasValue()) {
+    hiveConfMap[facebook::velox::connector::hive::HiveConfig::kGcsMaxRetryCount] = gsMaxRetryCount.value();
+  }
+
+  // https://cloud.google.com/cpp/docs/reference/storage/latest/classgoogle_1_1cloud_1_1storage_1_1LimitedTimeRetryPolicy
+  auto gsMaxRetryTime = conf->get<std::string>("spark.hadoop.fs.gs.http.max.retry-time");
+  if (gsMaxRetryTime.hasValue()) {
+    hiveConfMap[facebook::velox::connector::hive::HiveConfig::kGcsMaxRetryTime] = gsMaxRetryTime.value();
+  }
+
   // https://github.com/GoogleCloudDataproc/hadoop-connectors/blob/master/gcs/CONFIGURATION.md#authentication
-  auto gsAuthType = conf->get("spark.hadoop.fs.gs.auth.type");
+  auto gsAuthType = conf->get<std::string>("spark.hadoop.fs.gs.auth.type");
   if (gsAuthType.hasValue()) {
     std::string type = gsAuthType.value();
     if (type == "SERVICE_ACCOUNT_JSON_KEYFILE") {
-      auto gsAuthServiceAccountJsonKeyfile = conf->get("spark.hadoop.fs.gs.auth.service.account.json.keyfile");
+      auto gsAuthServiceAccountJsonKeyfile =
+          conf->get<std::string>("spark.hadoop.fs.gs.auth.service.account.json.keyfile");
       if (gsAuthServiceAccountJsonKeyfile.hasValue()) {
-        auto stream = std::ifstream(gsAuthServiceAccountJsonKeyfile.value());
-        stream.exceptions(std::ios::badbit);
-        std::string gsAuthServiceAccountJson = std::string(std::istreambuf_iterator<char>(stream.rdbuf()), {});
-        hiveConf->setValue(facebook::velox::connector::hive::HiveConfig::kGCSCredentials, gsAuthServiceAccountJson);
+        hiveConfMap[facebook::velox::connector::hive::HiveConfig::kGcsCredentialsPath] =
+            gsAuthServiceAccountJsonKeyfile.value();
       } else {
         LOG(WARNING) << "STARTUP: conf spark.hadoop.fs.gs.auth.type is set to SERVICE_ACCOUNT_JSON_KEYFILE, "
                         "however conf spark.hadoop.fs.gs.auth.service.account.json.keyfile is not set";
@@ -143,11 +177,10 @@ std::shared_ptr<facebook::velox::core::MemConfigMutable> getHiveConfig(
   }
 #endif
 
-  hiveConf->setValue(
-      facebook::velox::connector::hive::HiveConfig::kEnableFileHandleCache,
-      conf->get<bool>(kVeloxFileHandleCacheEnabled, kVeloxFileHandleCacheEnabledDefault) ? "true" : "false");
+  hiveConfMap[facebook::velox::connector::hive::HiveConfig::kEnableFileHandleCache] =
+      conf->get<bool>(kVeloxFileHandleCacheEnabled, kVeloxFileHandleCacheEnabledDefault) ? "true" : "false";
 
-  return hiveConf;
+  return std::make_shared<facebook::velox::config::ConfigBase>(std::move(hiveConfMap));
 }
 
 } // namespace gluten

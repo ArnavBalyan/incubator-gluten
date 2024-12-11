@@ -71,6 +71,12 @@ public class CHNativeBlock {
 
   public native void nativeClose(long blockAddress);
 
+  public native BlockStats nativeBlockStats(long blockAddress, int columnPosition);
+
+  public BlockStats getBlockStats(int columnPosition) {
+    return nativeBlockStats(blockAddress, columnPosition);
+  }
+
   public void close() {
     if (blockAddress != 0) {
       nativeClose(blockAddress);
@@ -90,14 +96,12 @@ public class CHNativeBlock {
   }
 
   public ColumnarBatch toColumnarBatch() {
-    ColumnVector[] vectors = new ColumnVector[numColumns()];
-    for (int i = 0; i < numColumns(); i++) {
+    int numRows = numRows();
+    int cols = numColumns();
+    ColumnVector[] vectors = new ColumnVector[cols];
+    for (int i = 0; i < cols; i++) {
       vectors[i] =
           new CHColumnVector(CHExecUtil.inferSparkDataType(getTypeByPosition(i)), blockAddress, i);
-    }
-    int numRows = 0;
-    if (numColumns() != 0) {
-      numRows = numRows();
     }
     return new ColumnarBatch(vectors, numRows);
   }

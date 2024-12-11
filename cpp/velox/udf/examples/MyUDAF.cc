@@ -20,19 +20,22 @@
 #include <velox/functions/Macros.h>
 #include <velox/functions/Registerer.h>
 #include <velox/functions/lib/aggregates/AverageAggregateBase.h>
-#include <iostream>
+
 #include "udf/Udaf.h"
+#include "udf/examples/UdfCommon.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 
 namespace {
 
+static const char* kBoolean = "boolean";
 static const char* kInteger = "int";
 static const char* kBigInt = "bigint";
 static const char* kFloat = "float";
 static const char* kDouble = "double";
 
+namespace myavg {
 // Copied from velox/exec/tests/SimpleAverageAggregate.cpp
 
 // Implementation of the average aggregation function through the
@@ -87,7 +90,7 @@ class AverageAggregate {
     }
 
     bool writeFinalResult(exec::out_type<OutputType>& out) {
-      out = sum_ / count_;
+      out = sum_ / count_ + 100.0;
       return true;
     }
 
@@ -98,84 +101,120 @@ class AverageAggregate {
   };
 };
 
-exec::AggregateRegistrationResult registerSimpleAverageAggregate(const std::string& name) {
-  std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures;
+class MyAvgRegisterer final : public gluten::UdafRegisterer {
+  int getNumUdaf() override {
+    return 2;
+  }
 
-  for (const auto& inputType : {"smallint", "integer", "bigint", "double"}) {
+  void populateUdafEntries(int& index, gluten::UdafEntry* udafEntries) override {
+    for (const auto& argTypes : {myAvgArgFloat_, myAvgArgDouble_}) {
+      udafEntries[index++] = {name_.c_str(), kDouble, 1, argTypes, myAvgIntermediateType_, false, true};
+    }
+  }
+
+  void registerSignatures() override {
+    registerSimpleAverageAggregate();
+  }
+
+ private:
+  exec::AggregateRegistrationResult registerSimpleAverageAggregate() {
+    std::vector<std::shared_ptr<exec::AggregateFunctionSignature>> signatures;
+
     signatures.push_back(exec::AggregateFunctionSignatureBuilder()
                              .returnType("double")
                              .intermediateType("row(double,bigint)")
-                             .argumentType(inputType)
+                             .argumentType("double")
                              .build());
+
+    signatures.push_back(exec::AggregateFunctionSignatureBuilder()
+                             .returnType("real")
+                             .intermediateType("row(double,bigint)")
+                             .argumentType("real")
+                             .build());
+
+    return exec::registerAggregateFunction(
+        name_,
+        std::move(signatures),
+        [this](
+            core::AggregationNode::Step step,
+            const std::vector<TypePtr>& argTypes,
+            const TypePtr& resultType,
+            const core::QueryConfig& /*config*/) -> std::unique_ptr<exec::Aggregate> {
+          VELOX_CHECK_LE(argTypes.size(), 1, "{} takes at most one argument", name_);
+          auto inputType = argTypes[0];
+          if (exec::isRawInput(step)) {
+            switch (inputType->kind()) {
+              case TypeKind::REAL:
+                return std::make_unique<SimpleAggregateAdapter<AverageAggregate<float>>>(resultType);
+              case TypeKind::DOUBLE:
+                return std::make_unique<SimpleAggregateAdapter<AverageAggregate<double>>>(resultType);
+              default:
+                VELOX_FAIL("Unknown input type for {} aggregation {}", name_, inputType->kindName());
+            }
+          } else {
+            switch (resultType->kind()) {
+              case TypeKind::REAL:
+                return std::make_unique<SimpleAggregateAdapter<AverageAggregate<float>>>(resultType);
+              case TypeKind::DOUBLE:
+              case TypeKind::ROW:
+                return std::make_unique<SimpleAggregateAdapter<AverageAggregate<double>>>(resultType);
+              default:
+                VELOX_FAIL("Unsupported result type for final aggregation: {}", resultType->kindName());
+            }
+          }
+        },
+        true /*registerCompanionFunctions*/,
+        true /*overwrite*/);
   }
 
-  signatures.push_back(exec::AggregateFunctionSignatureBuilder()
-                           .returnType("real")
-                           .intermediateType("row(double,bigint)")
-                           .argumentType("real")
-                           .build());
+  const std::string name_ = "test.org.apache.spark.sql.MyDoubleAvg";
+  const char* myAvgArgFloat_[1] = {kFloat};
+  const char* myAvgArgDouble_[1] = {kDouble};
 
-  return exec::registerAggregateFunction(
-      name,
-      std::move(signatures),
-      [name](
-          core::AggregationNode::Step step,
-          const std::vector<TypePtr>& argTypes,
-          const TypePtr& resultType,
-          const core::QueryConfig& /*config*/) -> std::unique_ptr<exec::Aggregate> {
-        VELOX_CHECK_LE(argTypes.size(), 1, "{} takes at most one argument", name);
-        auto inputType = argTypes[0];
-        if (exec::isRawInput(step)) {
-          switch (inputType->kind()) {
-            case TypeKind::SMALLINT:
-              return std::make_unique<SimpleAggregateAdapter<AverageAggregate<int16_t>>>(resultType);
-            case TypeKind::INTEGER:
-              return std::make_unique<SimpleAggregateAdapter<AverageAggregate<int32_t>>>(resultType);
-            case TypeKind::BIGINT:
-              return std::make_unique<SimpleAggregateAdapter<AverageAggregate<int64_t>>>(resultType);
-            case TypeKind::REAL:
-              return std::make_unique<SimpleAggregateAdapter<AverageAggregate<float>>>(resultType);
-            case TypeKind::DOUBLE:
-              return std::make_unique<SimpleAggregateAdapter<AverageAggregate<double>>>(resultType);
-            default:
-              VELOX_FAIL("Unknown input type for {} aggregation {}", name, inputType->kindName());
-          }
-        } else {
-          switch (resultType->kind()) {
-            case TypeKind::REAL:
-              return std::make_unique<SimpleAggregateAdapter<AverageAggregate<float>>>(resultType);
-            case TypeKind::DOUBLE:
-            case TypeKind::ROW:
-              return std::make_unique<SimpleAggregateAdapter<AverageAggregate<double>>>(resultType);
-            default:
-              VELOX_FAIL("Unsupported result type for final aggregation: {}", resultType->kindName());
-          }
-        }
-      },
-      true /*registerCompanionFunctions*/,
-      true /*overwrite*/);
+  const char* myAvgIntermediateType_ = "struct<a:double,b:bigint>";
+};
+
+} // namespace myavg
+
+std::vector<std::shared_ptr<gluten::UdafRegisterer>>& globalRegisters() {
+  static std::vector<std::shared_ptr<gluten::UdafRegisterer>> registerers;
+  return registerers;
+}
+
+void setupRegisterers() {
+  static bool inited = false;
+  if (inited) {
+    return;
+  }
+  auto& registerers = globalRegisters();
+  registerers.push_back(std::make_shared<myavg::MyAvgRegisterer>());
+  inited = true;
 }
 } // namespace
 
-const int kNumMyUdaf = 4;
-
 DEFINE_GET_NUM_UDAF {
-  return kNumMyUdaf;
+  setupRegisterers();
+
+  int numUdf = 0;
+  for (const auto& registerer : globalRegisters()) {
+    numUdf += registerer->getNumUdaf();
+  }
+  return numUdf;
 }
 
-const char* myAvgArg1[] = {kInteger};
-const char* myAvgArg2[] = {kBigInt};
-const char* myAvgArg3[] = {kFloat};
-const char* myAvgArg4[] = {kDouble};
-const char* myAvgIntermediateType = "struct<a:double,b:bigint>";
 DEFINE_GET_UDAF_ENTRIES {
+  setupRegisterers();
+
   int index = 0;
-  udafEntries[index++] = {"myavg", kDouble, 1, myAvgArg1, myAvgIntermediateType};
-  udafEntries[index++] = {"myavg", kDouble, 1, myAvgArg2, myAvgIntermediateType};
-  udafEntries[index++] = {"myavg", kDouble, 1, myAvgArg3, myAvgIntermediateType};
-  udafEntries[index++] = {"myavg", kDouble, 1, myAvgArg4, myAvgIntermediateType};
+  for (const auto& registerer : globalRegisters()) {
+    registerer->populateUdafEntries(index, udafEntries);
+  }
 }
 
 DEFINE_REGISTER_UDAF {
-  registerSimpleAverageAggregate("myavg");
+  setupRegisterers();
+
+  for (const auto& registerer : globalRegisters()) {
+    registerer->registerSignatures();
+  }
 }

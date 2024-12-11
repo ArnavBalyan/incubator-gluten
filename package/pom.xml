@@ -20,18 +20,11 @@
   <parent>
     <groupId>org.apache.gluten</groupId>
     <artifactId>gluten-parent</artifactId>
-    <version>1.2.0-SNAPSHOT</version>
+    <version>1.3.0-SNAPSHOT</version>
     <relativePath>../pom.xml</relativePath>
   </parent>
 
   <dependencies>
-    <dependency>
-      <groupId>org.apache.gluten</groupId>
-      <artifactId>gluten-core</artifactId>
-      <version>${project.version}</version>
-      <scope>compile</scope>
-    </dependency>
-
     <!-- Do not remove the following. They are for enforcer plugin -->
     <dependency>
       <groupId>org.apache.spark</groupId>
@@ -86,6 +79,36 @@
         <dependency>
           <groupId>org.apache.gluten</groupId>
           <artifactId>gluten-uniffle-package</artifactId>
+          <version>${project.version}</version>
+        </dependency>
+      </dependencies>
+    </profile>
+    <profile>
+      <id>iceberg</id>
+      <dependencies>
+        <dependency>
+          <groupId>org.apache.gluten</groupId>
+          <artifactId>gluten-iceberg</artifactId>
+          <version>${project.version}</version>
+        </dependency>
+      </dependencies>
+    </profile>
+    <profile>
+      <id>delta</id>
+      <dependencies>
+        <dependency>
+          <groupId>org.apache.gluten</groupId>
+          <artifactId>gluten-delta</artifactId>
+          <version>${project.version}</version>
+        </dependency>
+      </dependencies>
+    </profile>
+    <profile>
+      <id>hudi</id>
+      <dependencies>
+        <dependency>
+          <groupId>org.apache.gluten</groupId>
+          <artifactId>gluten-hudi</artifactId>
           <version>${project.version}</version>
         </dependency>
       </dependencies>
@@ -155,10 +178,11 @@
                 <relocation>
                   <pattern>org.apache.arrow</pattern>
                   <shadedPattern>${gluten.shade.packageName}.org.apache.arrow</shadedPattern>
-                  <!--arrow's C wrapper refers to the original class path, so we should not relocate here-->
+                  <!--arrow's C and dataset wrapper refers to the original class path, so we should not relocate here-->
                   <excludes>
                     <exclude>org.apache.arrow.c.*</exclude>
                     <exclude>org.apache.arrow.c.jni.*</exclude>
+                    <exclude>org.apache.arrow.dataset.**</exclude>
                   </excludes>
                 </relocation>
                 <relocation>
@@ -166,6 +190,21 @@
                   <shadedPattern>${gluten.shade.packageName}.com.google.flatbuffers</shadedPattern>
                 </relocation>
               </relocations>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                    <exclude>META-INF/DEPENDENCIES</exclude>
+                    <exclude>META-INF/LICENSE.txt</exclude>
+                    <exclude>META-INF/NOTICE.txt</exclude>
+                    <exclude>LICENSE.txt</exclude>
+                    <exclude>NOTICE.txt</exclude>
+                  </excludes>
+                </filter>
+              </filters>
             </configuration>
           </execution>
         </executions>
@@ -201,8 +240,10 @@
             <fileset>
               <directory>target</directory>
               <excludes>
-                <exclude>*3.2*</exclude>
-                <exclude>*3.3*</exclude>
+                <exclude>*spark3.2*</exclude>
+                <exclude>*spark3.3*</exclude>
+                <exclude>*spark3.4*</exclude>
+                <exclude>*spark3.5*</exclude>
               </excludes>
               <followSymlinks>false</followSymlinks>
             </fileset>
@@ -262,6 +303,8 @@
                     <ignoreClass>org.apache.spark.sql.hive.execution.HiveFileFormat</ignoreClass>
                     <ignoreClass>org.apache.spark.sql.hive.execution.HiveFileFormat$$$$anon$1</ignoreClass>
                     <ignoreClass>org.apache.spark.sql.hive.execution.HiveOutputWriter</ignoreClass>
+                    <ignoreClass>org.apache.spark.sql.catalyst.plans.QueryPlan</ignoreClass>
+                    <ignoreClass>org.apache.spark.sql.catalyst.plans.QueryPlan*</ignoreClass>
                     <ignoreClass>org.apache.spark.sql.execution.datasources.BasicWriteTaskStats</ignoreClass>
                     <ignoreClass>org.apache.spark.sql.execution.datasources.BasicWriteTaskStats$</ignoreClass>
                     <ignoreClass>org.apache.spark.sql.execution.datasources.BasicWriteTaskStatsTracker</ignoreClass>
@@ -304,6 +347,12 @@
                     <ignoreClass>org.apache.spark.sql.execution.datasources.WriterBucketSpec$</ignoreClass>
                     <ignoreClass>org.apache.spark.sql.execution.datasources.InsertIntoHadoopFsRelationCommand</ignoreClass>
                     <ignoreClass>org.apache.spark.sql.execution.datasources.InsertIntoHadoopFsRelationCommand$</ignoreClass>
+                    <ignoreClass>org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter</ignoreClass>
+                    <ignoreClass>org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter$</ignoreClass>
+                    <ignoreClass>org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter$SpillableIterator</ignoreClass>
+                    <ignoreClass>org.apache.spark.util.collection.unsafe.sort.UnsafeExternalSorter$ChainedIterator</ignoreClass>
+                    <ignoreClass>org.apache.spark.memory.MemoryConsumer</ignoreClass>
+                    <ignoreClass>org.apache.spark.memory.TaskMemoryManager </ignoreClass>
                     <!-- protobuf -->
                     <ignoreClass>com.google.protobuf.*</ignoreClass>
                   </ignoreClasses>

@@ -21,7 +21,7 @@ transforms Spark plan to Substrait plan, and then send the Substrait plan to the
 
 The Gluten codes consist of two parts: the C++ codes and the Java/Scala codes. 
 1. All C++ codes are placed under the directory of `${GLUTEN_HOME}/cpp`, the Java/Scala codes are placed under several directories, such as
-  `${GLUTEN_HOME}/gluten-core` `${GLUTEN_HOME}/gluten-data` `${GLUTEN_HOME}/backends-velox`.
+  `${GLUTEN_HOME}/gluten-substrait` `${GLUTEN_HOME}/gluten-data` `${GLUTEN_HOME}/backends-velox`.
 2. The Java/Scala codes are responsible for validating and transforming the execution plan. Source data should also be provided, the source data may
   come from files or other forms such as networks.
 3. The C++ codes take the Substrait plan and the source data as inputs and transform the Substrait plan to the corresponding backend plan. If the backend
@@ -122,6 +122,13 @@ gdb ${GLUTEN_HOME}/cpp/build/releases/libgluten.so 'core-Executor task l-2000883
 ```
 - the `core-Executor task l-2000883-1671542526` represents the core file name.
 
+# How to use jemalloc for Gluten native engine
+
+Currently, we have no dedicated memory allocator implemented by jemalloc. User can set environment variable `LD_PRELOAD` for lib jemalloc
+to let it override the corresponding C standard functions entirely. It may help alleviate OOM issues.
+
+`spark.executorEnv.LD_PREALOD=/path/to/libjemalloc.so`
+
 # How to run TPC-H on Velox backend
 
 Now, both Parquet and DWRF format files are supported, related scripts and files are under the directory of `${GLUTEN_HOME}/backends-velox/workload/tpch`.
@@ -133,14 +140,14 @@ Here we will explain how to run TPC-H on Velox backend with the Parquet file for
 1. First, prepare the datasets, you have two choices.
   - One way, generate Parquet datasets using the script under `${GLUTEN_HOME}/backends-velox/workload/tpch/gen_data/parquet_dataset`, you can get help from the above
     -mentioned `README.md`.
-  - The other way, using the small dataset under `${GLUTEN_HOME}/backends-velox/src/test/resources/tpch-data-parquet-velox` directly, if you just want to make simple
+  - The other way, using the small dataset under `${GLUTEN_HOME}/backends-velox/src/test/resources/tpch-data-parquet` directly, if you just want to make simple
     TPC-H testing, this dataset is a good choice.
 2. Second, run TPC-H on Velox backend testing.
   - Modify `${GLUTEN_HOME}/backends-velox/workload/tpch/run_tpch/tpch_parquet.scala`.
     - Set `var parquet_file_path` to correct directory. If using the small dataset directly in the step one, then modify it as below:
 
     ```scala
-    var parquet_file_path = "gluten_home/backends-velox/src/test/resources/tpch-data-parquet-velox"
+    var parquet_file_path = "gluten_home/backends-velox/src/test/resources/tpch-data-parquet"
     ```
 
     - Set `var gluten_root` to correct directory. If `${GLUTEN_HOME}` is the directory of `/home/gluten`, then modify it as below
@@ -163,7 +170,7 @@ wait to add
 
 # How to track the memory exhaust problem
 
-When your gluten spark jobs failed because of OOM, you can track the memory allocation's call stack by configuring `spark.gluten.backtrace.allocation = true`.
+When your gluten spark jobs failed because of OOM, you can track the memory allocation's call stack by configuring `spark.gluten.memory.backtrace.allocation = true`.
 The above configuration will use `BacktraceAllocationListener` wrapping from `SparkAllocationListener` to create `VeloxMemoryManager`.
 
 `BacktraceAllocationListener` will check every allocation, if a single allocation bytes exceeds a fixed value or the accumulative allocation bytes exceeds 1/2/3...G,

@@ -23,8 +23,11 @@ struct UdfEntry {
   const char* name;
   const char* dataType;
 
-  size_t numArgs;
+  int numArgs;
   const char** argTypes;
+
+  bool variableArity{false};
+  bool allowTypeConversion{false};
 };
 
 #define GLUTEN_GET_NUM_UDF getNumUdf

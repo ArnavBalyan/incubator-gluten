@@ -50,6 +50,7 @@ case class TestFileSourceScanExecTransformer(
   override def getPartitions: Seq[InputPartition] =
     BackendsApiManager.getTransformerApiInstance.genInputPartitionSeq(
       relation,
+      requiredSchema,
       selectedPartitions,
       output,
       bucketedScan,
@@ -57,5 +58,5 @@ case class TestFileSourceScanExecTransformer(
       optionalNumCoalescedBuckets,
       disableBucketedScan)
 
-  override val nodeNamePrefix: String = "TestNativeFile"
+  override val nodeNamePrefix: String = "TestFile"
 }

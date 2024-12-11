@@ -19,6 +19,8 @@
 #include <arrow/io/api.h>
 
 #include "shuffle/LocalPartitionWriter.h"
+#include "shuffle/VeloxHashShuffleWriter.h"
+#include "shuffle/VeloxRssSortShuffleWriter.h"
 #include "shuffle/VeloxShuffleWriter.h"
 #include "shuffle/rss/RssPartitionWriter.h"
 #include "utils/TestUtils.h"
@@ -33,7 +35,6 @@ using namespace arrow;
 using namespace arrow::ipc;
 
 namespace gluten {
-
 namespace {
 
 facebook::velox::RowVectorPtr takeRows(
@@ -68,12 +69,28 @@ std::vector<ShuffleTestParams> createShuffleTestParams() {
   std::vector<int32_t> mergeBufferSizes = {0, 3, 4, 10, 4096};
 
   for (const auto& compression : compressions) {
+    for (const auto compressionBufferSize : {4, 56, 32 * 1024}) {
+      for (auto useRadixSort : {true, false}) {
+        params.push_back(ShuffleTestParams{
+            .shuffleWriterType = ShuffleWriterType::kSortShuffle,
+            .partitionWriterType = PartitionWriterType::kLocal,
+            .compressionType = compression,
+            .compressionBufferSize = compressionBufferSize,
+            .useRadixSort = useRadixSort});
+      }
+    }
+    params.push_back(ShuffleTestParams{ShuffleWriterType::kRssSortShuffle, PartitionWriterType::kRss, compression});
     for (const auto compressionThreshold : compressionThresholds) {
       for (const auto mergeBufferSize : mergeBufferSizes) {
-        params.push_back(
-            ShuffleTestParams{PartitionWriterType::kLocal, compression, compressionThreshold, mergeBufferSize});
+        params.push_back(ShuffleTestParams{
+            ShuffleWriterType::kHashShuffle,
+            PartitionWriterType::kLocal,
+            compression,
+            compressionThreshold,
+            mergeBufferSize});
       }
-      params.push_back(ShuffleTestParams{PartitionWriterType::kRss, compression, compressionThreshold, 0});
+      params.push_back(ShuffleTestParams{
+          ShuffleWriterType::kHashShuffle, PartitionWriterType::kRss, compression, compressionThreshold});
     }
   }
 
@@ -85,6 +102,9 @@ static const auto kShuffleWriteTestParams = createShuffleTestParams();
 } // namespace
 
 TEST_P(SinglePartitioningShuffleWriter, single) {
+  if (GetParam().shuffleWriterType != ShuffleWriterType::kHashShuffle) {
+    return;
+  }
   // Split 1 RowVector.
   {
     ASSERT_NOT_OK(initShuffleWriterOptions());
@@ -155,21 +175,12 @@ TEST_P(HashPartitioningShuffleWriter, hashPart1Vector) {
           nullEvery(5)),
   });
 
-  auto dataVector = makeRowVector({
-      makeNullableFlatVector<int8_t>({1, 2, 3, std::nullopt}),
-      makeFlatVector<int64_t>({1, 2, 3, 4}),
-      makeFlatVector<velox::StringView>({"nn", "re", "fr", "juiu"}),
-      makeFlatVector<int64_t>({232, 34567235, 1212, 4567}, DECIMAL(12, 4)),
-      makeFlatVector<int128_t>({232, 34567235, 1212, 4567}, DECIMAL(20, 4)),
-      makeFlatVector<int32_t>(
-          4, [](vector_size_t row) { return row % 2; }, nullEvery(5), DATE()),
-      makeFlatVector<Timestamp>(
-          4,
-          [](vector_size_t row) {
-            return Timestamp{row % 2, 0};
-          },
-          nullEvery(5)),
-  });
+  auto rowType = facebook::velox::asRowType(vector->type());
+  auto children = rowType->children();
+  auto names = rowType->names();
+  children.erase(children.begin());
+  names.erase(names.begin());
+  auto dataType = facebook::velox::ROW(std::move(names), std::move(children));
 
   auto firstBlock = makeRowVector({
       makeNullableFlatVector<int8_t>({2, std::nullopt}),
@@ -191,56 +202,19 @@ TEST_P(HashPartitioningShuffleWriter, hashPart1Vector) {
       makeNullableFlatVector<Timestamp>({std::nullopt, Timestamp(0, 0)}),
   });
 
-  testShuffleWriteMultiBlocks(*shuffleWriter, {vector}, 2, dataVector->type(), {{firstBlock}, {secondBlock}});
+  testShuffleWriteMultiBlocks(*shuffleWriter, {vector}, 2, dataType, {{firstBlock}, {secondBlock}});
 }
 
 TEST_P(HashPartitioningShuffleWriter, hashPart1VectorComplexType) {
   ASSERT_NOT_OK(initShuffleWriterOptions());
   auto shuffleWriter = createShuffleWriter(defaultArrowMemoryPool().get());
-  std::vector<VectorPtr> children = {
-      makeNullableFlatVector<int32_t>({std::nullopt, 1}),
-      makeRowVector({
-          makeFlatVector<int32_t>({1, 3}),
-          makeNullableFlatVector<velox::StringView>({std::nullopt, "de"}),
-      }),
-      makeNullableFlatVector<StringView>({std::nullopt, "10 I'm not inline string"}),
-      makeArrayVector<int64_t>({
-          {1, 2, 3, 4, 5},
-          {1, 2, 3},
-      }),
-      makeMapVector<int32_t, StringView>({{{1, "str1000"}, {2, "str2000"}}, {{3, "str3000"}, {4, "str4000"}}}),
-  };
-  auto dataVector = makeRowVector(children);
+  auto children = childrenComplex_;
   children.insert((children.begin()), makeFlatVector<int32_t>({1, 2}));
   auto vector = makeRowVector(children);
+  auto firstBlock = takeRows({inputVectorComplex_}, {{1}});
+  auto secondBlock = takeRows({inputVectorComplex_}, {{0}});
 
-  auto firstBlock = makeRowVector({
-      makeConstant<int32_t>(1, 1),
-      makeRowVector({
-          makeConstant<int32_t>(3, 1),
-          makeFlatVector<velox::StringView>({"de"}),
-      }),
-      makeFlatVector<StringView>({"10 I'm not inline string"}),
-      makeArrayVector<int64_t>({
-          {1, 2, 3},
-      }),
-      makeMapVector<int32_t, StringView>({{{3, "str3000"}, {4, "str4000"}}}),
-  });
-
-  auto secondBlock = makeRowVector({
-      makeNullConstant(TypeKind::INTEGER, 1),
-      makeRowVector({
-          makeConstant<int32_t>(1, 1),
-          makeNullableFlatVector<velox::StringView>({std::nullopt}),
-      }),
-      makeNullableFlatVector<StringView>({std::nullopt}),
-      makeArrayVector<int64_t>({
-          {1, 2, 3, 4, 5},
-      }),
-      makeMapVector<int32_t, StringView>({{{1, "str1000"}, {2, "str2000"}}}),
-  });
-
-  testShuffleWriteMultiBlocks(*shuffleWriter, {vector}, 2, dataVector->type(), {{firstBlock}, {secondBlock}});
+  testShuffleWriteMultiBlocks(*shuffleWriter, {vector}, 2, inputVectorComplex_->type(), {{firstBlock}, {secondBlock}});
 }
 
 TEST_P(HashPartitioningShuffleWriter, hashPart3Vectors) {
@@ -256,6 +230,24 @@ TEST_P(HashPartitioningShuffleWriter, hashPart3Vectors) {
       2,
       inputVector1_->type(),
       {{blockPid2}, {blockPid1}});
+}
+
+TEST_P(HashPartitioningShuffleWriter, hashLargeVectors) {
+  const int32_t expectedMaxBatchSize = 8;
+  ASSERT_NOT_OK(initShuffleWriterOptions());
+  auto shuffleWriter = createShuffleWriter(defaultArrowMemoryPool().get());
+  // calculate maxBatchSize_
+  ASSERT_NOT_OK(splitRowVector(*shuffleWriter, hashInputVector1_));
+  if (GetParam().shuffleWriterType == kHashShuffle) {
+    VELOX_CHECK_EQ(shuffleWriter->maxBatchSize(), expectedMaxBatchSize);
+  }
+
+  auto blockPid2 = takeRows({inputVector1_, inputVector2_, inputVector1_}, {{1, 2, 3, 4, 8}, {0, 1}, {1, 2, 3, 4, 8}});
+  auto blockPid1 = takeRows({inputVector1_}, {{0, 5, 6, 7, 9, 0, 5, 6, 7, 9}});
+
+  VELOX_CHECK(hashInputVector1_->size() > expectedMaxBatchSize);
+  testShuffleWriteMultiBlocks(
+      *shuffleWriter, {hashInputVector2_, hashInputVector1_}, 2, inputVector1_->type(), {{blockPid2}, {blockPid1}});
 }
 
 TEST_P(RangePartitioningShuffleWriter, rangePartition) {
@@ -289,6 +281,9 @@ TEST_P(RoundRobinPartitioningShuffleWriter, roundRobin) {
 }
 
 TEST_P(RoundRobinPartitioningShuffleWriter, preAllocForceRealloc) {
+  if (GetParam().shuffleWriterType != kHashShuffle) {
+    return;
+  }
   ASSERT_NOT_OK(initShuffleWriterOptions());
   shuffleWriterOptions_.bufferReallocThreshold = 0; // Force re-alloc on buffer size changed.
   auto shuffleWriter = createShuffleWriter(defaultArrowMemoryPool().get());
@@ -344,6 +339,9 @@ TEST_P(RoundRobinPartitioningShuffleWriter, preAllocForceRealloc) {
 }
 
 TEST_P(RoundRobinPartitioningShuffleWriter, preAllocForceReuse) {
+  if (GetParam().shuffleWriterType != kHashShuffle) {
+    return;
+  }
   ASSERT_NOT_OK(initShuffleWriterOptions());
   shuffleWriterOptions_.bufferReallocThreshold = 1; // Force re-alloc on buffer size changed.
   auto shuffleWriter = createShuffleWriter(defaultArrowMemoryPool().get());
@@ -376,6 +374,9 @@ TEST_P(RoundRobinPartitioningShuffleWriter, preAllocForceReuse) {
 }
 
 TEST_P(RoundRobinPartitioningShuffleWriter, spillVerifyResult) {
+  if (GetParam().shuffleWriterType != kHashShuffle) {
+    return;
+  }
   ASSERT_NOT_OK(initShuffleWriterOptions());
   auto shuffleWriter = createShuffleWriter(defaultArrowMemoryPool().get());
 
@@ -406,15 +407,25 @@ TEST_P(RoundRobinPartitioningShuffleWriter, spillVerifyResult) {
   auto blockPid2 = takeRows({inputVector1_}, {{1, 3, 5, 7, 9, 1, 3, 5, 7, 9, 1, 3, 5, 7, 9}});
 
   // Stop and verify.
-  shuffleWriteReadMultiBlocks(
-      *shuffleWriter,
-      2,
-      inputVector1_->type(),
-      //      {{block1Pid1, block1Pid1, block1Pid1}, {block1Pid2, block1Pid2, block1Pid2}});
-      {{blockPid1}, {blockPid2}});
+  shuffleWriteReadMultiBlocks(*shuffleWriter, 2, inputVector1_->type(), {{blockPid1}, {blockPid2}});
 }
 
-TEST_F(VeloxShuffleWriterMemoryTest, memoryLeak) {
+TEST_P(RoundRobinPartitioningShuffleWriter, sortMaxRows) {
+  if (GetParam().shuffleWriterType != kSortShuffle) {
+    return;
+  }
+  ASSERT_NOT_OK(initShuffleWriterOptions());
+  auto shuffleWriter = createShuffleWriter(defaultArrowMemoryPool().get());
+
+  // Set memLimit to 0 to force allocate a new buffer for each row.
+  ASSERT_NOT_OK(splitRowVector(*shuffleWriter, inputVector1_, 0));
+
+  auto blockPid1 = takeRows({inputVector1_}, {{0, 2, 4, 6, 8}});
+  auto blockPid2 = takeRows({inputVector1_}, {{1, 3, 5, 7, 9}});
+  shuffleWriteReadMultiBlocks(*shuffleWriter, 2, inputVector1_->type(), {{blockPid1}, {blockPid2}});
+}
+
+TEST_F(VeloxHashShuffleWriterMemoryTest, memoryLeak) {
   ASSERT_NOT_OK(initShuffleWriterOptions());
   std::shared_ptr<arrow::MemoryPool> pool = std::make_shared<LimitedMemoryPool>();
   shuffleWriterOptions_.bufferSize = 4;
@@ -432,7 +443,7 @@ TEST_F(VeloxShuffleWriterMemoryTest, memoryLeak) {
   ASSERT_TRUE(pool->bytes_allocated() == 0);
 }
 
-TEST_F(VeloxShuffleWriterMemoryTest, spillFailWithOutOfMemory) {
+TEST_F(VeloxHashShuffleWriterMemoryTest, spillFailWithOutOfMemory) {
   ASSERT_NOT_OK(initShuffleWriterOptions());
   std::shared_ptr<arrow::MemoryPool> pool = std::make_shared<LimitedMemoryPool>(0);
   shuffleWriterOptions_.bufferSize = 4;
@@ -445,7 +456,7 @@ TEST_F(VeloxShuffleWriterMemoryTest, spillFailWithOutOfMemory) {
   ASSERT_TRUE(status.IsOutOfMemory());
 }
 
-TEST_F(VeloxShuffleWriterMemoryTest, kInit) {
+TEST_F(VeloxHashShuffleWriterMemoryTest, kInit) {
   ASSERT_NOT_OK(initShuffleWriterOptions());
   shuffleWriterOptions_.bufferSize = 4;
   auto shuffleWriter = createShuffleWriter(defaultArrowMemoryPool().get());
@@ -515,7 +526,7 @@ TEST_F(VeloxShuffleWriterMemoryTest, kInit) {
   ASSERT_NOT_OK(shuffleWriter->stop());
 }
 
-TEST_F(VeloxShuffleWriterMemoryTest, kInitSingle) {
+TEST_F(VeloxHashShuffleWriterMemoryTest, kInitSingle) {
   ASSERT_NOT_OK(initShuffleWriterOptions());
   shuffleWriterOptions_.partitioning = Partitioning::kSingle;
   shuffleWriterOptions_.bufferSize = 4;
@@ -537,10 +548,10 @@ TEST_F(VeloxShuffleWriterMemoryTest, kInitSingle) {
   ASSERT_NOT_OK(shuffleWriter->stop());
 }
 
-TEST_F(VeloxShuffleWriterMemoryTest, kSplit) {
+TEST_F(VeloxHashShuffleWriterMemoryTest, kSplit) {
   ASSERT_NOT_OK(initShuffleWriterOptions());
   shuffleWriterOptions_.bufferSize = 4;
-  auto pool = SelfEvictedMemoryPool(defaultArrowMemoryPool().get());
+  auto pool = SelfEvictedMemoryPool(defaultArrowMemoryPool().get(), false);
   auto shuffleWriter = createShuffleWriter(&pool);
 
   pool.setEvictable(shuffleWriter.get());
@@ -559,7 +570,7 @@ TEST_F(VeloxShuffleWriterMemoryTest, kSplit) {
   ASSERT_NOT_OK(shuffleWriter->stop());
 }
 
-TEST_F(VeloxShuffleWriterMemoryTest, kSplitSingle) {
+TEST_F(VeloxHashShuffleWriterMemoryTest, kSplitSingle) {
   ASSERT_NOT_OK(initShuffleWriterOptions());
   shuffleWriterOptions_.partitioning = Partitioning::kSingle;
   auto pool = SelfEvictedMemoryPool(defaultArrowMemoryPool().get(), false);
@@ -577,11 +588,13 @@ TEST_F(VeloxShuffleWriterMemoryTest, kSplitSingle) {
   ASSERT_NOT_OK(shuffleWriter->stop());
 }
 
-TEST_F(VeloxShuffleWriterMemoryTest, kStop) {
+TEST_F(VeloxHashShuffleWriterMemoryTest, kStop) {
   for (const auto partitioning : {Partitioning::kSingle, Partitioning::kRoundRobin}) {
     ASSERT_NOT_OK(initShuffleWriterOptions());
-    shuffleWriterOptions_.partitioning = partitioning;
-    shuffleWriterOptions_.bufferSize = 4;
+    shuffleWriterOptions_.bufferSize = 4096;
+    // Force compression.
+    partitionWriterOptions_.compressionThreshold = 0;
+    partitionWriterOptions_.mergeThreshold = 0;
     auto pool = SelfEvictedMemoryPool(defaultArrowMemoryPool().get(), false);
     auto shuffleWriter = createShuffleWriter(&pool);
 
@@ -589,20 +602,49 @@ TEST_F(VeloxShuffleWriterMemoryTest, kStop) {
 
     for (int i = 0; i < 10; ++i) {
       ASSERT_NOT_OK(splitRowVector(*shuffleWriter, inputVector1_));
-      ASSERT_NOT_OK(splitRowVector(*shuffleWriter, inputVector2_));
-      ASSERT_NOT_OK(splitRowVector(*shuffleWriter, inputVector1_));
     }
+    // Reclaim bytes to shrink partition buffer.
+    int64_t reclaimed = 0;
+    ASSERT_NOT_OK(shuffleWriter->reclaimFixedSize(2000, &reclaimed));
+    ASSERT_TRUE(reclaimed >= 2000);
 
     // Trigger spill during stop.
-    // For single partitioning, spill is triggered by allocating buffered output stream.
     ASSERT_TRUE(pool.checkEvict(pool.bytes_allocated(), [&] { ASSERT_NOT_OK(shuffleWriter->stop()); }));
   }
 }
 
-TEST_F(VeloxShuffleWriterMemoryTest, evictPartitionBuffers) {
+TEST_F(VeloxHashShuffleWriterMemoryTest, kStopComplex) {
+  ASSERT_NOT_OK(initShuffleWriterOptions());
+  shuffleWriterOptions_.bufferSize = 4096;
+  // Force compression.
+  partitionWriterOptions_.compressionThreshold = 0;
+  partitionWriterOptions_.mergeThreshold = 0;
+  auto pool = SelfEvictedMemoryPool(defaultArrowMemoryPool().get(), false);
+  auto shuffleWriter = createShuffleWriter(&pool);
+
+  pool.setEvictable(shuffleWriter.get());
+  for (int i = 0; i < 3; ++i) {
+    ASSERT_NOT_OK(splitRowVector(*shuffleWriter, inputVectorComplex_));
+  }
+  // Reclaim bytes to shrink partition buffer.
+  int64_t reclaimed = 0;
+  ASSERT_NOT_OK(shuffleWriter->reclaimFixedSize(2000, &reclaimed));
+  ASSERT_TRUE(reclaimed >= 2000);
+
+  // Reclaim from PartitionWriter to free cached bytes.
+  auto payloadSize = shuffleWriter->cachedPayloadSize();
+  int64_t evicted;
+  ASSERT_NOT_OK(shuffleWriter->reclaimFixedSize(payloadSize, &evicted));
+  ASSERT_EQ(evicted, payloadSize);
+
+  // When evicting partitioning buffers in stop, spill will be triggered by complex types allocating extra memory.
+  ASSERT_TRUE(pool.checkEvict(pool.bytes_allocated(), [&] { ASSERT_NOT_OK(shuffleWriter->stop()); }));
+}
+
+TEST_F(VeloxHashShuffleWriterMemoryTest, evictPartitionBuffers) {
   ASSERT_NOT_OK(initShuffleWriterOptions());
   shuffleWriterOptions_.bufferSize = 4;
-  auto pool = SelfEvictedMemoryPool(defaultArrowMemoryPool().get());
+  auto pool = SelfEvictedMemoryPool(defaultArrowMemoryPool().get(), false);
   auto shuffleWriter = createShuffleWriter(&pool);
 
   pool.setEvictable(shuffleWriter.get());
@@ -621,7 +663,7 @@ TEST_F(VeloxShuffleWriterMemoryTest, evictPartitionBuffers) {
   ASSERT_EQ(shuffleWriter->partitionBufferSize(), 0);
 }
 
-TEST_F(VeloxShuffleWriterMemoryTest, kUnevictableSingle) {
+TEST_F(VeloxHashShuffleWriterMemoryTest, kUnevictableSingle) {
   ASSERT_NOT_OK(initShuffleWriterOptions());
   shuffleWriterOptions_.partitioning = Partitioning::kSingle;
   auto pool = SelfEvictedMemoryPool(defaultArrowMemoryPool().get());
@@ -643,7 +685,7 @@ TEST_F(VeloxShuffleWriterMemoryTest, kUnevictableSingle) {
   ASSERT_EQ(evicted, 0);
 }
 
-TEST_F(VeloxShuffleWriterMemoryTest, resizeBinaryBufferTriggerSpill) {
+TEST_F(VeloxHashShuffleWriterMemoryTest, resizeBinaryBufferTriggerSpill) {
   ASSERT_NOT_OK(initShuffleWriterOptions());
   shuffleWriterOptions_.bufferReallocThreshold = 1;
   auto pool = SelfEvictedMemoryPool(defaultArrowMemoryPool().get(), false);
@@ -685,4 +727,5 @@ INSTANTIATE_TEST_SUITE_P(
     VeloxShuffleWriteParam,
     RangePartitioningShuffleWriter,
     ::testing::ValuesIn(kShuffleWriteTestParams));
+
 } // namespace gluten
