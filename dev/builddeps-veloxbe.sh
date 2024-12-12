@@ -188,6 +188,7 @@ function build_arrow {
 }
 
 function build_velox {
+  git config --global --add safe.directory /home/user/gluten/ep/build-velox/build/velox_ep
   echo "Start to build Velox"
   cd $GLUTEN_DIR/ep/build-velox/src
   # When BUILD_TESTS is on for gluten cpp, we need turn on VELOX_BUILD_TEST_UTILS via build_test_utils.

@@ -28,6 +28,7 @@ function prepare_arrow_build() {
   wget_and_untar https://archive.apache.org/dist/arrow/arrow-${VELOX_ARROW_BUILD_VERSION}/apache-arrow-${VELOX_ARROW_BUILD_VERSION}.tar.gz arrow_ep
   cd arrow_ep
   patch -p1 < $CURRENT_DIR/../ep/build-velox/src/modify_arrow.patch
+  cp /home/user/gluten/java_arrow_pom.xml /home/user/gluten/ep/_ep/arrow_ep/java/pom.xml
   patch -p1 < $CURRENT_DIR/../ep/build-velox/src/modify_arrow_dataset_scan_option.patch
   popd
 }
