@@ -17,6 +17,7 @@ set(SOURCES
     Registry.cc
     UDFBootstrap.cc
     HiveStringString.cc
+    DateTrunc.cc
 )
 add_library(UdfFramework SHARED ${SOURCES})
 target_link_libraries(UdfFramework velox)

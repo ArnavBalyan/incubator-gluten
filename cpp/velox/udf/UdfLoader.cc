@@ -86,11 +86,19 @@ std::unordered_set<std::shared_ptr<UdfLoader::UdfSignature>> UdfLoader::getRegis
       getUdfEntries(udfEntries);
 
       for (auto i = 0; i < numUdf; ++i) {
-        const auto& entry = udfEntries[i];
-        auto dataType = toSubstraitTypeStr(entry.dataType);
-        auto argTypes = toSubstraitTypeStr(entry.numArgs, entry.argTypes);
-        signatures_.insert(std::make_shared<UdfSignature>(
-            entry.name, dataType, argTypes, entry.variableArity, entry.allowTypeConversion));
+          const auto& entry = udfEntries[i];
+
+          std::cout << "UDF Entry: " << entry.dataType << std::endl;
+          std::cout << "  Data Type: " << entry.numArgs << std::endl;
+          std::cout << "  Argument Types: " << entry.argTypes << std::endl;
+
+          auto dataType = toSubstraitTypeStr(entry.dataType);
+          auto argTypes = toSubstraitTypeStr(entry.numArgs, entry.argTypes);
+
+          std::cout << "  dataType123: " << dataType << std::endl;
+          std::cout << "  argTypes: " << argTypes << std::endl;
+          signatures_.insert(std::make_shared<UdfSignature>(
+              entry.name, dataType, argTypes, entry.variableArity, entry.allowTypeConversion));
       }
       free(udfEntries);
     } else {

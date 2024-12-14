@@ -15,162 +15,158 @@
  * limitations under the License.
  */
 
-#pragma once
-
-#include "UdfFramework.h"
+#include <velox/expression/VectorFunction.h>
+#include <velox/functions/Macros.h>
 #include <velox/functions/Registerer.h>
-#include <velox/type/Timestamp.h>
-#include <unordered_map>
+#include "udf/Udf.h"
+#include "UdfCommon.h"
+#include "Registry.h"
 #include <string>
-#include <chrono>
+#include <sstream>
+#include <iomanip>
 #include <ctime>
+#include <unordered_map>
 
-namespace gluten {
+namespace datetrunc {
 
-class DateTruncUdf : public UdfFramework {
-public:
-    DateTruncUdf() : name_("date_trunc"), returnType_("timestamp") {}
+enum class Precision {
+    SECOND,
+    MINUTE,
+    HOUR,
+    DAY,
+    WEEK,
+    MONTH,
+    YEAR,
+    INVALID
+};
 
-    const std::string& getName() const override { return name_; }
-    const std::string& getReturnType() const override { return returnType_; }
-    const std::vector<std::string>& getArgTypes() const override {
-        return {"varchar", "timestamp", "varchar", "varchar"};
-    }
-
-    void registerWithVelox() override {
-        facebook::velox::registerFunction<FieldSource, velox::Timestamp, std::string, velox::Timestamp>({name_});
-        facebook::velox::registerFunction<FieldSourceToZone, velox::Timestamp, std::string, velox::Timestamp, std::string>({name_});
-        facebook::velox::registerFunction<FieldSourceFromToZone, velox::Timestamp, std::string, velox::Timestamp, std::string, std::string>({name_});
-    }
-
-    void populateUdfEntry(UdfEntry& entry) const override {
-        entry.name = name_.c_str();
-        entry.returnType = returnType_.c_str();
-        entry.numArgs = 4;
-        entry.argTypes = new const char*[4]{"varchar", "timestamp", "varchar", "varchar"};
-    }
-
-private:
-    const std::string name_;
-    const std::string returnType_;
-
-    enum class Precision {
-        SECOND,
-        MINUTE,
-        HOUR,
-        DAY,
-        WEEK,
-        MONTH,
-        YEAR,
-        INVALID
+static Precision getPrecision(const std::string& field) {
+    static const std::unordered_map<std::string, Precision> precisionMap = {
+        {"second", Precision::SECOND},
+        {"minute", Precision::MINUTE},
+        {"hour",   Precision::HOUR},
+        {"day",    Precision::DAY},
+        {"week",   Precision::WEEK},
+        {"month",  Precision::MONTH},
+        {"year",   Precision::YEAR}
     };
 
-    static Precision getPrecision(const std::string& field) {
-        static const std::unordered_map<std::string, Precision> precisionMap = {
-            {"second", Precision::SECOND},
-            {"minute", Precision::MINUTE},
-            {"hour", Precision::HOUR},
-            {"day", Precision::DAY},
-            {"week", Precision::WEEK},
-            {"month", Precision::MONTH},
-            {"year", Precision::YEAR},
-        };
+    auto it = precisionMap.find(field);
+    return (it != precisionMap.end()) ? it->second : Precision::INVALID;
+}
 
-        auto it = precisionMap.find(field);
-        return (it != precisionMap.end()) ? it->second : Precision::INVALID;
+static void truncateDate(Precision precision, std::tm& tm) {
+    switch (precision) {
+        case Precision::SECOND:
+            break;
+        case Precision::MINUTE:
+            tm.tm_sec = 0;
+            break;
+        case Precision::HOUR:
+            tm.tm_min = 0;
+            tm.tm_sec = 0;
+            break;
+        case Precision::DAY:
+            tm.tm_hour = 0;
+            tm.tm_min = 0;
+            tm.tm_sec = 0;
+            break;
+        case Precision::WEEK: {
+            int offset = (tm.tm_wday == 0) ? -6 : 1 - tm.tm_wday;
+            tm.tm_mday += offset;
+            tm.tm_hour = 0;
+            tm.tm_min = 0;
+            tm.tm_sec = 0;
+            break;
+        }
+        case Precision::MONTH:
+            tm.tm_mday = 1;
+            tm.tm_hour = 0;
+            tm.tm_min = 0;
+            tm.tm_sec = 0;
+            break;
+        case Precision::YEAR:
+            tm.tm_mon = 0;
+            tm.tm_mday = 1;
+            tm.tm_hour = 0;
+            tm.tm_min = 0;
+            tm.tm_sec = 0;
+            break;
+        case Precision::INVALID:
+            throw std::invalid_argument("Invalid precision");
     }
+}
 
-    static void truncateDate(Precision precision, std::tm& tm) {
-        switch (precision) {
-            case Precision::SECOND:
-                break;
-            case Precision::MINUTE:
-                tm.tm_sec = 0;
-                break;
-            case Precision::HOUR:
-                tm.tm_min = 0;
-                tm.tm_sec = 0;
-                break;
-            case Precision::DAY:
-                tm.tm_hour = 0;
-                tm.tm_min = 0;
-                tm.tm_sec = 0;
-                break;
-            case Precision::WEEK:
-                tm.tm_wday = 0;
-                tm.tm_hour = 0;
-                tm.tm_min = 0;
-                tm.tm_sec = 0;
-                break;
-            case Precision::MONTH:
-                tm.tm_mday = 1;
-                tm.tm_hour = 0;
-                tm.tm_min = 0;
-                tm.tm_sec = 0;
-                break;
-            case Precision::YEAR:
-                tm.tm_mon = 0;
-                tm.tm_mday = 1;
-                tm.tm_hour = 0;
-                tm.tm_min = 0;
-                tm.tm_sec = 0;
-                break;
-            case Precision::INVALID:
-                throw std::invalid_argument("Invalid precision field");
-        }
-    }
+static std::string formatTime(const std::tm& tm, bool hasT) {
+    std::ostringstream oss;
+    oss << std::put_time(&tm, hasT ? "%Y-%m-%dT%H:%M:%S" : "%Y-%m-%d %H:%M:%S");
+    return oss.str();
+}
 
-    struct FieldSource {
-        VELOX_DEFINE_FUNCTION_TYPES(T);
+template <typename T>
+struct DateTruncFunction {
+    VELOX_DEFINE_FUNCTION_TYPES(T);
 
-        FOLLY_ALWAYS_INLINE void call(out_type<velox::Timestamp>& result,
-                                      const arg_type<std::string>& field,
-                                      const arg_type<velox::Timestamp>& source) {
-            truncate(result, field, source, "UTC", "UTC");
-        }
-    };
+    FOLLY_ALWAYS_INLINE void call(
+        out_type<facebook::velox::Varchar>& result,
+        const arg_type<facebook::velox::Varchar>& field,
+        const arg_type<facebook::velox::Varchar>& source) const {
 
-    struct FieldSourceToZone {
-        VELOX_DEFINE_FUNCTION_TYPES(T);
+        std::string fieldStr(field.data(), field.size());
+        std::string sourceStr(source.data(), source.size());
 
-        FOLLY_ALWAYS_INLINE void call(out_type<velox::Timestamp>& result,
-                                      const arg_type<std::string>& field,
-                                      const arg_type<velox::Timestamp>& source,
-                                      const arg_type<std::string>& toTimeZone) {
-            truncate(result, field, source, "UTC", toTimeZone);
-        }
-    };
-
-    struct FieldSourceFromToZone {
-        VELOX_DEFINE_FUNCTION_TYPES(T);
-
-        FOLLY_ALWAYS_INLINE void call(out_type<velox::Timestamp>& result,
-                                      const arg_type<std::string>& field,
-                                      const arg_type<velox::Timestamp>& source,
-                                      const arg_type<std::string>& fromTimeZone,
-                                      const arg_type<std::string>& toTimeZone) {
-            truncate(result, field, source, fromTimeZone, toTimeZone);
-        }
-    };
-
-    static void truncate(out_type<velox::Timestamp>& result,
-                         const std::string& field,
-                         const velox::Timestamp& source,
-                         const std::string& fromTimeZone,
-                         const std::string& toTimeZone) {
-        std::time_t rawTime = source.toMillis() / 1000;
-        std::tm tm = *std::gmtime(&rawTime);
-
-        auto precision = getPrecision(field);
+        Precision precision = getPrecision(fieldStr);
         if (precision == Precision::INVALID) {
-            throw std::invalid_argument("Invalid field: " + field);
+            result = "";
+            return;
+        }
+
+        std::tm tm = {};
+        bool hasT = (sourceStr.find('T') != std::string::npos);
+
+        std::istringstream ss(sourceStr);
+        if (hasT) {
+            ss >> std::get_time(&tm, "%Y-%m-%dT%H:%M:%S");
+        } else {
+            ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
+        }
+
+        if (ss.fail()) {
+            result = "";
+            return;
         }
 
         truncateDate(precision, tm);
 
-        std::time_t truncatedTime = std::mktime(&tm);
-        result = velox::Timestamp::fromMillis(truncatedTime * 1000);
+        result = formatTime(tm, hasT);
     }
 };
 
-} // namespace gluten
+class DateTruncRegisterer final : public gluten::UdfRegisterer {
+ public:
+    int getNumUdf() override { return 1; }
+
+    void populateUdfEntries(int& index, gluten::UdfEntry* udfEntries) override {
+        udfEntries[index++] = {name_.c_str(), "varchar", 2, argTypes_, false, true};
+    }
+
+    void registerSignatures() override {
+        facebook::velox::registerFunction<
+            DateTruncFunction,
+            facebook::velox::Varchar,
+            facebook::velox::Varchar,
+            facebook::velox::Varchar>({name_});
+    }
+
+ private:
+    const std::string name_ = "com.uber.hive.udf.DateTrunc";
+    const char* argTypes_[2] = {"varchar", "varchar"};
+};
+
+} // namespace datetrunc
+
+namespace gluten {
+void registerDateTruncUdf() {
+    globalUdfRegisterers().push_back(std::make_shared<datetrunc::DateTruncRegisterer>());
+}
+}

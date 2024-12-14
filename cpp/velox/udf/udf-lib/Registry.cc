@@ -55,6 +55,9 @@ void initializeUdfRegisterers() {
     extern void registerHiveStringStringUdf();
     registerHiveStringStringUdf();
 
+    extern void registerDateTruncUdf();
+    registerDateTruncUdf();
+
     initialized = true;
 }
 
