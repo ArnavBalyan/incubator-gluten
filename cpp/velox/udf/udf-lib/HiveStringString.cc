@@ -32,9 +32,11 @@ struct HiveStringStringFunction {
 
     FOLLY_ALWAYS_INLINE void call(
         out_type<facebook::velox::Varchar>& result,
-        const arg_type<facebook::velox::Varchar>& a) const {
+        const arg_type<facebook::velox::Varchar>& a,
+        const arg_type<facebook::velox::Varchar>& b) const {
         result.append(a.data());
-        result.append(" cpp_udf");
+        result.append(" ");
+        result.append(b.data());
     }
 };
 
@@ -45,12 +47,13 @@ class HiveStringStringRegisterer final : public gluten::UdfRegisterer {
     }
 
     void populateUdfEntries(int& index, gluten::UdfEntry* udfEntries) override {
-        udfEntries[index++] = {name_.c_str(), "varchar", 1, argTypes_, false, true};
+        udfEntries[index++] = {name_.c_str(), "varchar", 2, argTypes_, false, true};
     }
 
     void registerSignatures() override {
         facebook::velox::registerFunction<
             HiveStringStringFunction,
+            facebook::velox::Varchar,
             facebook::velox::Varchar,
             facebook::velox::Varchar>(
                 {name_});
@@ -58,7 +61,7 @@ class HiveStringStringRegisterer final : public gluten::UdfRegisterer {
 
  private:
     const std::string name_ = "org.apache.spark.sql.hive.execution.UDFStringString";
-    const char* argTypes_[1] = {"varchar"};
+    const char* argTypes_[2] = {"varchar", "varchar"};
 };
 
 } // namespace hivestringstring

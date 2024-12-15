@@ -337,30 +337,14 @@ object UDFResolver extends Logging {
       .getConfString(VeloxBackendSettings.GLUTEN_VELOX_UDF_ALLOW_TYPE_CONVERSION, "false")
       .toBoolean
   }
-  // scalastyle:off println
+
   def getUdfExpression(name: String, alias: String)(children: Seq[Expression]): UDFExpression = {
-    println("Registered UDFs:")
-    println(UDFMap.keys.mkString("\n"))
-    println("UDFMap Content:")
-    UDFMap.foreach {
-      case (udfName, signatures) =>
-        println(s"UDF: $udfName")
-        println(s"Signatures: ${signatures.mkString(", ")}")
-    }
-
-    println(s"Incoming UDF request: $name")
-    println(
-      s"iat: ${children
-          .map(e => s"${e.simpleString(Int.MaxValue)}: ${e.dataType.simpleString(Int.MaxValue)}")
-          .mkString(", ")}"
-    )
-
     def errorMessage: String =
-      s"UDF $name -> ${children.map(_.dataType.simpleString(Int.MaxValue)).mkString(", ")} reged"
+      s"UDF $name -> ${children.map(_.dataType.simpleString).mkString(", ")} is not registered."
 
     val allowTypeConversion = checkAllowTypeConversion
     val signatures =
-      UDFMap.getOrElse(name, throw new GlutenNotSupportException(errorMessage))
+      UDFMap.getOrElse(name, throw new GlutenNotSupportException(errorMessage));
     signatures.find(sig => tryBind(sig, children.map(_.dataType), allowTypeConversion)) match {
       case Some(sig) =>
         UDFExpression(

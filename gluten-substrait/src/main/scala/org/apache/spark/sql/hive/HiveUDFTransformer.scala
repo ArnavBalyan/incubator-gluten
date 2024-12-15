@@ -50,11 +50,6 @@ object HiveUDFTransformer {
       udfName: String,
       expr: Expression,
       attributeSeq: Seq[Attribute]): GenericExpressionTransformer = {
-    // scalastyle:off println
-    println(s"UDF Name: $udfName")
-    println("UDF Mappings:")
-    println(UDFMappings.hiveUDFMap.mkString("\n"))
-
     UDFMappings.hiveUDFMap.get(udfName.toLowerCase(Locale.ROOT)) match {
       case Some(name) =>
         GenericExpressionTransformer(
