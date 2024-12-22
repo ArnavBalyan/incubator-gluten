@@ -296,7 +296,7 @@
           <tagsToExclude>${tagsToExclude}</tagsToExclude>
           <systemProperties>
             <velox.udf.lib.path>
-              ${cpp.build.dir}/velox/udf/examples/libmyudf.so,${cpp.build.dir}/velox/udf/examples/libmyudaf.so
+              /home/user/gluten/cpp/build/velox/udf/udf-lib/libUdfFramework.so,/home/user/gluten/cpp/build/velox/udf/udf-lib/libUdfFramework.so
             </velox.udf.lib.path>
           </systemProperties>
         </configuration>
