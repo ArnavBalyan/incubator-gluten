@@ -54,7 +54,7 @@ extern const Metric LocalThreadScheduled;
 
 namespace local_engine
 {
-
+using namespace DB;
 jclass CacheManager::cache_result_class = nullptr;
 jmethodID CacheManager::cache_result_constructor = nullptr;
 
@@ -132,7 +132,9 @@ Task CacheManager::cachePart(
                 1);
             QueryPlan plan;
             plan.addStep(std::move(read_step));
-            auto pipeline_builder = plan.buildQueryPipeline({}, {});
+            DB::QueryPlanOptimizationSettings optimization_settings{context};
+            DB::BuildQueryPipelineSettings build_settings{context};
+            auto pipeline_builder = plan.buildQueryPipeline(optimization_settings, build_settings);
             auto pipeline = QueryPipelineBuilder::getPipeline(std::move(*pipeline_builder.get()));
             PullingPipelineExecutor executor(pipeline);
             while (true)

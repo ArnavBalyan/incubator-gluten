@@ -34,6 +34,7 @@ namespace DB
 {
 namespace MergeTreeSetting
 {
+extern const MergeTreeSettingsBool assign_part_uuids;
 extern const MergeTreeSettingsFloat ratio_of_defaults_for_sparse_serialization;
 extern const MergeTreeSettingsBool fsync_part_directory;
 extern const MergeTreeSettingsBool fsync_after_insert;
@@ -49,7 +50,7 @@ extern const int NO_SUCH_DATA_PART;
 
 namespace local_engine
 {
-
+using namespace DB;
 void SparkStorageMergeTree::analysisPartsByRanges(DB::ReadFromMergeTree & source, const DB::RangesInDataParts & ranges_in_data_parts)
 {
     ReadFromMergeTree::AnalysisResult result;
@@ -463,25 +464,27 @@ MergeTreeDataWriter::TemporaryPart SparkMergeTreeDataWriter::writeTempPart(
     new_data_part->minmax_idx = std::move(minmax_idx);
 
     data_part_storage->beginTransaction();
+
+    if (data_settings[MergeTreeSetting::assign_part_uuids])
+        new_data_part->uuid = UUIDHelpers::generateV4();
+
     SyncGuardPtr sync_guard;
-    if (new_data_part->isStoredOnDisk())
+
+    /// The name could be non-unique in case of stale files from previous runs.
+    String full_path = new_data_part->getDataPartStorage().getFullPath();
+
+    if (new_data_part->getDataPartStorage().exists())
     {
-        /// The name could be non-unique in case of stale files from previous runs.
-        String full_path = new_data_part->getDataPartStorage().getFullPath();
+        LOG_WARNING(log, "Removing old temporary directory {}", full_path);
+        data_part_storage->removeRecursive();
+    }
 
-        if (new_data_part->getDataPartStorage().exists())
-        {
-            // LOG_WARNING(log, "Removing old temporary directory {}", full_path);
-            data_part_storage->removeRecursive();
-        }
+    data_part_storage->createDirectories();
 
-        data_part_storage->createDirectories();
-
-        if ((*data.getSettings())[MergeTreeSetting::fsync_part_directory])
-        {
-            const auto disk = data_part_volume->getDisk();
-            sync_guard = disk->getDirectorySyncGuard(full_path);
-        }
+    if ((*data.getSettings())[MergeTreeSetting::fsync_part_directory])
+    {
+        const auto disk = data_part_volume->getDisk();
+        sync_guard = disk->getDirectorySyncGuard(full_path);
     }
 
     /// This effectively chooses minimal compression method:
@@ -516,6 +519,25 @@ MergeTreeDataWriter::TemporaryPart SparkMergeTreeDataWriter::writeTempPart(
     temp_part.finalize();
     data_part_storage->commitTransaction();
     return temp_part;
+}
+
+std::unique_ptr<MergeTreeSettings>
+SparkWriteStorageMergeTree::buildMergeTreeSettings(const ContextMutablePtr & context, const MergeTreeTableSettings & config)
+{
+    //TODO: set settings though ASTStorage
+    auto settings = std::make_unique<DB::MergeTreeSettings>();
+
+    settings->set("allow_nullable_key", Field(true));
+    if (!config.storage_policy.empty())
+        settings->set("storage_policy", Field(config.storage_policy));
+
+    if (settingsEqual(context->getSettingsRef(), "merge_tree.assign_part_uuids", "true"))
+        settings->set("assign_part_uuids", Field(true));
+
+    if (String min_rows_for_wide_part; tryGetString(context->getSettingsRef(), "merge_tree.min_rows_for_wide_part", min_rows_for_wide_part))
+        settings->set("min_rows_for_wide_part", Field(std::strtoll(min_rows_for_wide_part.c_str(), nullptr, 10)));
+
+    return settings;
 }
 
 SinkToStoragePtr SparkWriteStorageMergeTree::write(

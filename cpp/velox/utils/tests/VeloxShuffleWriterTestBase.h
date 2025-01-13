@@ -261,7 +261,7 @@ class VeloxShuffleWriterTest : public ::testing::TestWithParam<ShuffleTestParams
 
     ShuffleTestParams params = GetParam();
     shuffleWriterOptions_.useRadixSort = params.useRadixSort;
-    shuffleWriterOptions_.compressionBufferSize = params.compressionBufferSize;
+    shuffleWriterOptions_.sortEvictBufferSize = params.compressionBufferSize;
     partitionWriterOptions_.compressionType = params.compressionType;
     switch (partitionWriterOptions_.compressionType) {
       case arrow::Compression::UNCOMPRESSED:
@@ -360,7 +360,7 @@ class VeloxShuffleWriterTest : public ::testing::TestWithParam<ShuffleTestParams
       facebook::velox::serializer::presto::PrestoVectorSerde::registerVectorSerde();
     }
     // Set batchSize to a large value to make all batches are merged by reader.
-    auto deserializerFactory = std::make_unique<gluten::VeloxColumnarBatchDeserializerFactory>(
+    auto deserializerFactory = std::make_unique<gluten::VeloxShuffleReaderDeserializerFactory>(
         schema,
         std::move(codec),
         veloxCompressionType,
