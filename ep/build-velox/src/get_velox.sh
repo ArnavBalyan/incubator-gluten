@@ -16,8 +16,8 @@
 
 set -exu
 
-VELOX_REPO=$(dirname $(realpath "$0"))/../build/velox_ep
-VELOX_BRANCH=VELOX_BRANCH=2025_01_12
+VELOX_REPO=https://github.com/oap-project/velox
+VELOX_BRANCH=2025_01_12
 VELOX_HOME=""
 
 OS=`uname -s`

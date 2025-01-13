@@ -7,6 +7,6 @@ docker:
   shell: true
 
 command:
-  export JAVA_HOME=/usr/lib/jvm/temurin-8-jdk-amd64 && ./dev/releasebundle-veloxbe-uber.sh --enable_gcs=ON --enable_hdfs=ON --enable_vcpkg=ON --enable_ep_cache=ON ${OTHER_BUILD_FLAGS}
+  export JAVA_HOME=/usr/lib/jvm/temurin-8-jdk-amd64 && ./dev/releasebundle-veloxbe-uber.sh --enable_gcs=ON --enable_hdfs=ON --enable_vcpkg=ON  ${OTHER_BUILD_FLAGS}
 
 timeout_in_minutes: 360

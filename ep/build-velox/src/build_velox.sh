@@ -118,6 +118,10 @@ function compile {
     COMPILE_OPTION="$COMPILE_OPTION -DVELOX_ENABLE_BENCHMARKS=ON"
   fi
 
+  if [ -n "${GLUTEN_VCPKG_ENABLED:-}" ]; then
+    COMPILE_OPTION="$COMPILE_OPTION -DVELOX_GFLAGS_TYPE=static"
+  fi
+
   COMPILE_OPTION="$COMPILE_OPTION -DCMAKE_BUILD_TYPE=${BUILD_TYPE}"
   COMPILE_TYPE=$(if [[ "$BUILD_TYPE" == "debug" ]] || [[ "$BUILD_TYPE" == "Debug" ]]; then echo 'debug'; else echo 'release'; fi)
   echo "COMPILE_OPTION: "$COMPILE_OPTION
