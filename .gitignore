@@ -1,4 +1,6 @@
+
 .arcconfig
+
 **/target/**
 *.class
 *.iml
@@ -97,3 +99,5 @@ dist/
 
 # For Hive
 metastore_db/
+
+.ipynb_checkpoints

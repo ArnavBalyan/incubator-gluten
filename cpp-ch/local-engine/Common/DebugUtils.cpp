@@ -26,9 +26,14 @@
 #include <google/protobuf/json/json.h>
 #include <google/protobuf/util/json_util.h>
 #include <google/protobuf/wrappers.pb.h>
+#include <Common/BlockTypeUtils.h>
 #include <Common/CHUtil.h>
+#include <Common/PlanUtil.h>
 #include <Common/QueryContext.h>
+#include <Common/formatReadable.h>
 #include <Common/logger_useful.h>
+#include "Functions/IFunction.h"
+#include <Interpreters/ActionsDAG.h>
 
 namespace pb_util = google::protobuf::util;
 
@@ -38,7 +43,7 @@ namespace Utils
 {
 
 /**
- * Return the number of half widths in a given string. Note that a full width character
+ * Return the number of half-widths in a given string. Note that a full width character
  * occupies two half widths.
  *
  * For a string consisting of 1 million characters, the execution of this method requires
@@ -289,6 +294,17 @@ static std::string showString(const NameAndColumns & block, size_t numRows, size
 
 ///
 
+void dumpMemoryUsage(const char * type)
+{
+    auto logger = getLogger("QueryContextManager");
+    if (!logger)
+        return;
+    auto task_id = local_engine::QueryContext::instance().currentTaskIdOrEmpty();
+    task_id = task_id.empty() ? "" : "(" + task_id + ")";
+    auto usage = local_engine::currentThreadGroupMemoryUsage();
+    LOG_ERROR(logger, "{}{} Memory Usage {}", type, task_id, formatReadableSizeWithBinarySuffix(usage));
+}
+
 void dumpPlan(DB::QueryPlan & plan, const char * type, bool force, LoggerPtr logger)
 {
     if (!logger)
@@ -339,6 +355,24 @@ void headBlock(const DB::Block & block, size_t count)
     std::cerr << showString(block, count) << std::endl;
 }
 
+void printBlockHeader(const DB::Block & block, const std::string & prefix)
+{
+    auto nameColumn = local_engine::STRING()->createColumn();
+    auto typeColumn = local_engine::STRING()->createColumn();
+
+    for (const auto & column : block.getColumnsWithTypeAndName())
+    {
+        nameColumn->insert(column.name);
+        typeColumn->insert(column.type->getName());
+    }
+
+    if (!prefix.empty())
+        std::cerr << prefix << std::endl;
+
+    std::cerr << Utils::showString({{"[Name]", nameColumn->getPtr()}, {"[type]", typeColumn->getPtr()}}, nameColumn->size(), 100, false)
+              << std::endl;
+}
+
 void headColumn(const DB::ColumnPtr & column, size_t count)
 {
     std::cerr << Utils::showString({{"Column", column}}, count, 20, false) << std::endl;
@@ -365,4 +399,74 @@ std::string showString(const DB::Block & block, size_t numRows, size_t truncate,
         [](const DB::ColumnWithTypeAndName & col) { return std::make_pair(col.name, col.column); });
     return Utils::showString(name_and_columns, numRows, truncate, vertical);
 }
+
+std::string dumpActionsDAG(const DB::ActionsDAG & dag)
+{
+    std::stringstream ss;
+    ss << "digraph ActionsDAG {\n";
+    ss << "  rankdir=BT;\n"; // Invert the vertical direction
+    ss << "  nodesep=0.1;\n"; // Reduce space between nodes
+    ss << "  ranksep=0.1;\n"; // Reduce space between ranks
+    ss << "  margin=0.1;\n"; // Reduce graph margin
+
+    std::unordered_map<const DB::ActionsDAG::Node *, size_t> node_to_id;
+    size_t id = 0;
+    for (const auto & node : dag.getNodes())
+        node_to_id[&node] = id++;
+
+    std::unordered_set<const DB::ActionsDAG::Node *> output_nodes(dag.getOutputs().begin(), dag.getOutputs().end());
+
+    for (const auto & node : dag.getNodes())
+    {
+        ss << "  n" << node_to_id[&node] << " [label=\"";
+
+        ss << "id:" << node_to_id[&node] << "\\l";
+        switch (node.type)
+        {
+            case DB::ActionsDAG::ActionType::COLUMN:
+                ss << "column:"
+                   << (node.column && DB::isColumnConst(*node.column)
+                           ? toString(assert_cast<const DB::ColumnConst &>(*node.column).getField())
+                           : "null")
+                   << "\\l";
+                break;
+            case DB::ActionsDAG::ActionType::ALIAS:
+                ss << "alias" << "\\l";
+                break;
+            case DB::ActionsDAG::ActionType::FUNCTION:
+                ss << "function: " << (node.function_base ? node.function_base->getName() : "null");
+                if (node.is_function_compiled)
+                   ss << " [compiled]";
+                ss << "\\l";
+                break;
+            case DB::ActionsDAG::ActionType::ARRAY_JOIN:
+                ss << "array join" << "\\l";
+                break;
+            case DB::ActionsDAG::ActionType::INPUT:
+                ss << "input" << "\\l";
+                break;
+        }
+
+        ss << "result type: " << (node.result_type ? node.result_type->getName() : "null") << "\\l";
+
+        ss << "children:";
+        for (const auto * child : node.children)
+            ss << " " << node_to_id[child];
+        ss << "\\l";
+
+        ss << "\"";
+        if (output_nodes.contains(&node))
+            ss << ", shape=doublecircle";
+
+        ss << "];\n";
+    }
+
+    for (const auto & node : dag.getNodes())
+        for (const auto * child : node.children)
+            ss << "  n" << node_to_id[child] << " -> n" << node_to_id[&node] << ";\n";
+
+    ss << "}\n";
+    return ss.str();
+}
+
 }

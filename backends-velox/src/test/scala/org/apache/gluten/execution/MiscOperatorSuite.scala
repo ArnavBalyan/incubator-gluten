@@ -16,7 +16,7 @@
  */
 package org.apache.gluten.execution
 
-import org.apache.gluten.GlutenConfig
+import org.apache.gluten.config.GlutenConfig
 import org.apache.gluten.expression.VeloxDummyExpression
 import org.apache.gluten.sql.shims.SparkShimLoader
 
@@ -1275,12 +1275,14 @@ class MiscOperatorSuite extends VeloxWholeStageTransformerSuite with AdaptiveSpa
             |select cast(id as int) as c1, cast(id as string) c2 from range(100) order by c1 desc;
             |""".stripMargin)
 
-      runQueryAndCompare(
-        """
-          |select * from t1 cross join t2 on t1.c1 = t2.c1;
-          |""".stripMargin
-      ) {
-        checkGlutenOperatorMatch[ShuffledHashJoinExecTransformer]
+      withSQLConf("spark.gluten.sql.columnar.forceShuffledHashJoin" -> "true") {
+        runQueryAndCompare(
+          """
+            |select * from t1 cross join t2 on t1.c1 = t2.c1;
+            |""".stripMargin
+        ) {
+          checkGlutenOperatorMatch[ShuffledHashJoinExecTransformer]
+        }
       }
 
       withSQLConf("spark.sql.autoBroadcastJoinThreshold" -> "1MB") {
@@ -1789,6 +1791,13 @@ class MiscOperatorSuite extends VeloxWholeStageTransformerSuite with AdaptiveSpa
     val plan2 = dfInSH.queryExecution.executedPlan
     assert(plan1.find(_.isInstanceOf[ProjectExecTransformer]).isDefined)
     assert(plan2.find(_.isInstanceOf[ProjectExecTransformer]).isDefined)
+  }
+
+  test("cast timestamp to date") {
+    val query = "select cast(ts as date) from values (timestamp'2024-01-01 00:00:00') as tab(ts)"
+    runQueryAndCompare(query) {
+      checkGlutenOperatorMatch[ProjectExecTransformer]
+    }
   }
 
   test("timestamp broadcast join") {

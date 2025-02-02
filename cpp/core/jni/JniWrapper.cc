@@ -229,7 +229,10 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
   metricsBuilderClass = createGlobalClassReferenceOrError(env, "Lorg/apache/gluten/metrics/Metrics;");
 
   metricsBuilderConstructor = getMethodIdOrError(
-      env, metricsBuilderClass, "<init>", "([J[J[J[J[J[J[J[J[J[JJ[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J)V");
+      env,
+      metricsBuilderClass,
+      "<init>",
+      "([J[J[J[J[J[J[J[J[J[JJ[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J[J)V");
 
   nativeColumnarToRowInfoClass =
       createGlobalClassReferenceOrError(env, "Lorg/apache/gluten/vectorized/NativeColumnarToRowInfo;");
@@ -574,6 +577,9 @@ JNIEXPORT jobject JNICALL Java_org_apache_gluten_metrics_IteratorMetricsJniWrapp
       longArray[Metrics::kProcessedStrides],
       longArray[Metrics::kRemainingFilterTime],
       longArray[Metrics::kIoWaitTime],
+      longArray[Metrics::kStorageReadBytes],
+      longArray[Metrics::kLocalReadBytes],
+      longArray[Metrics::kRamReadBytes],
       longArray[Metrics::kPreloadSplits],
       longArray[Metrics::kPhysicalWrittenBytes],
       longArray[Metrics::kWriteIOTime],
@@ -832,7 +838,7 @@ JNIEXPORT jlong JNICALL Java_org_apache_gluten_vectorized_ShuffleWriterJniWrappe
     jstring codecJstr,
     jstring codecBackendJstr,
     jint compressionLevel,
-    jint compressionBufferSize,
+    jint sortEvictBufferSize,
     jint compressionThreshold,
     jstring compressionModeJstr,
     jint sortBufferInitialSize,
@@ -864,7 +870,7 @@ JNIEXPORT jlong JNICALL Java_org_apache_gluten_vectorized_ShuffleWriterJniWrappe
       .startPartitionId = startPartitionId,
       .shuffleWriterType = ShuffleWriter::stringToType(jStringToCString(env, shuffleWriterTypeJstr)),
       .sortBufferInitialSize = sortBufferInitialSize,
-      .compressionBufferSize = compressionBufferSize,
+      .sortEvictBufferSize = sortEvictBufferSize,
       .useRadixSort = static_cast<bool>(useRadixSort)};
 
   // Build PartitionWriterOptions.
@@ -1126,7 +1132,6 @@ JNIEXPORT void JNICALL Java_org_apache_gluten_vectorized_ShuffleReaderJniWrapper
     jlong shuffleReaderHandle) {
   JNI_METHOD_START
   auto reader = ObjectStore::retrieve<ShuffleReader>(shuffleReaderHandle);
-  GLUTEN_THROW_NOT_OK(reader->close());
   ObjectStore::release(shuffleReaderHandle);
   JNI_METHOD_END()
 }
@@ -1190,6 +1195,22 @@ JNIEXPORT jlong JNICALL Java_org_apache_gluten_vectorized_ColumnarBatchSerialize
   int32_t size = env->GetArrayLength(data);
   auto safeArray = getByteArrayElementsSafe(env, data);
   auto batch = serializer->deserialize(safeArray.elems(), size);
+  return ctx->saveObject(batch);
+  JNI_METHOD_END(kInvalidObjectHandle)
+}
+
+JNIEXPORT jlong JNICALL Java_org_apache_gluten_vectorized_ColumnarBatchSerializerJniWrapper_deserializeDirect( // NOLINT
+    JNIEnv* env,
+    jobject wrapper,
+    jlong serializerHandle,
+    jlong address,
+    jint size) {
+  JNI_METHOD_START
+  auto ctx = gluten::getRuntime(env, wrapper);
+
+  auto serializer = ObjectStore::retrieve<ColumnarBatchSerializer>(serializerHandle);
+  GLUTEN_DCHECK(serializer != nullptr, "ColumnarBatchSerializer cannot be null");
+  auto batch = serializer->deserialize((uint8_t*)address, size);
   return ctx->saveObject(batch);
   JNI_METHOD_END(kInvalidObjectHandle)
 }

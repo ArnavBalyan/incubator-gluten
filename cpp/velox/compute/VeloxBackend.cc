@@ -256,18 +256,6 @@ void VeloxBackend::initConnector() {
     connectorConfMap[k] = v;
   }
 
-#ifdef ENABLE_ABFS
-  const auto& confValue = backendConf_->rawConfigs();
-  for (auto& [k, v] : confValue) {
-    if (k.find("fs.azure.account.key") == 0) {
-      connectorConfMap[k] = v;
-    } else if (k.find("spark.hadoop.fs.azure.account.key") == 0) {
-      constexpr int32_t accountKeyPrefixLength = 13;
-      connectorConfMap[k.substr(accountKeyPrefixLength)] = v;
-    }
-  }
-#endif
-
   connectorConfMap[velox::connector::hive::HiveConfig::kEnableFileHandleCache] =
       backendConf_->get<bool>(kVeloxFileHandleCacheEnabled, kVeloxFileHandleCacheEnabledDefault) ? "true" : "false";
 
@@ -277,9 +265,8 @@ void VeloxBackend::initConnector() {
       backendConf_->get<std::string>(kMaxCoalescedDistance, "512KB"); // 512KB
   connectorConfMap[velox::connector::hive::HiveConfig::kPrefetchRowGroups] =
       backendConf_->get<std::string>(kPrefetchRowGroups, "1");
-  // Velox currently only support up to 8MB load quantum size on SSD.
   connectorConfMap[velox::connector::hive::HiveConfig::kLoadQuantum] =
-      backendConf_->get<std::string>(kLoadQuantum, "8388608"); // 8M
+      backendConf_->get<std::string>(kLoadQuantum, "268435456"); // 256M
   connectorConfMap[velox::connector::hive::HiveConfig::kFooterEstimatedSize] =
       backendConf_->get<std::string>(kDirectorySizeGuess, "32768"); // 32K
   connectorConfMap[velox::connector::hive::HiveConfig::kFilePreloadThreshold] =
@@ -293,10 +280,6 @@ void VeloxBackend::initConnector() {
       ioThreads >= 0,
       kVeloxIOThreads + " was set to negative number " + std::to_string(ioThreads) + ", this should not happen.");
   if (ioThreads > 0) {
-    LOG(WARNING)
-        << "Velox background IO threads is enabled. Which is highly unrecommended as of now, since it may cause"
-        << " some unexpected issues like query crash or hanging. Please turn it off if you are unsure about"
-        << " this option.";
     ioExecutor_ = std::make_unique<folly::IOThreadPoolExecutor>(ioThreads);
   }
   velox::connector::registerConnector(std::make_shared<velox::connector::hive::HiveConnector>(

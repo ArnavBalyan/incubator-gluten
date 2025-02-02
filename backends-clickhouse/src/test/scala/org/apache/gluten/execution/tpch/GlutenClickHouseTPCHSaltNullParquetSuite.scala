@@ -16,8 +16,8 @@
  */
 package org.apache.gluten.execution.tpch
 
-import org.apache.gluten.GlutenConfig
-import org.apache.gluten.backendsapi.clickhouse.CHConf
+import org.apache.gluten.backendsapi.clickhouse.{CHConf, RuntimeSettings}
+import org.apache.gluten.config.GlutenConfig
 import org.apache.gluten.execution._
 import org.apache.gluten.execution.GlutenPlan
 
@@ -1419,12 +1419,11 @@ class GlutenClickHouseTPCHSaltNullParquetSuite extends GlutenClickHouseTPCHAbstr
       queriesResults: String = queriesResults,
       compareResult: Boolean = true,
       noFallBack: Boolean = true)(customCheck: DataFrame => Unit): Unit = {
-    val confName = CHConf.runtimeSettings("query_plan_enable_optimizations")
 
-    withSQLConf((confName, "true")) {
+    withSQLConf((RuntimeSettings.COLLECT_METRICS.key, "false")) {
       compareTPCHQueryAgainstVanillaSpark(queryNum, tpchQueries, customCheck, noFallBack)
     }
-    withSQLConf((confName, "false")) {
+    withSQLConf((RuntimeSettings.COLLECT_METRICS.key, "true")) {
       compareTPCHQueryAgainstVanillaSpark(queryNum, tpchQueries, customCheck, noFallBack)
     }
   }
@@ -1455,7 +1454,7 @@ class GlutenClickHouseTPCHSaltNullParquetSuite extends GlutenClickHouseTPCHAbstr
       """
         |select reverse(split(n_comment, ' ')), reverse(n_comment),
         |concat(split(n_comment, ' ')), concat(n_comment), concat(n_comment, n_name),
-        |concat(split(n_comment, ' '), split(n_name, ' '))
+        |concat(split(n_comment, ' '), split(n_name, ' ')), concat(array()), concat(array(n_name))
         |from nation
         |""".stripMargin
     runQueryAndCompare(sql)(checkGlutenOperatorMatch[ProjectExecTransformer])
@@ -3350,5 +3349,33 @@ class GlutenClickHouseTPCHSaltNullParquetSuite extends GlutenClickHouseTPCHAbstr
     compareResultsAgainstVanillaSpark(query_sql, true, { _ => })
     spark.sql("drop table test_tbl_7759")
   }
+
+  test("GLUTEN-8253: Fix cast failed when in-filter with tuple values") {
+    spark.sql("drop table if exists test_filter")
+    spark.sql("create table test_filter(c1 string, c2 string) using parquet")
+    spark.sql(s"""
+                 |insert into test_filter values
+                 |('a1', 'b1'), ('a2', 'b2'), ('a3', 'b3'), ('a4', 'b4'), ('a5', 'b5'),
+                 |('a6', 'b6'), ('a7', 'b7'), ('a8', 'b8'), ('a9', 'b9'), ('a10', 'b10'),
+                 |('a11', 'b11'), ('a12', null), (null, 'b13'), (null, null)
+                 |""".stripMargin)
+    val sql = "select * from test_filter where (c1, c2) in (('a1', 'b1'), ('a2', 'b2'))"
+    compareResultsAgainstVanillaSpark(sql, true, { _ => })
+  }
+
+  test("GLUTEN-8343: Cast number to decimal") {
+    val create_table_sql = "create table test_tbl_8343(id bigint, d bigint, f double) using parquet"
+    val insert_data_sql =
+      "insert into test_tbl_8343 values(1, 55, 55.12345), (2, 137438953483, 137438953483.12345), (3, -12, -12.123), (4, 0, 0.0001), (5, NULL, NULL), (6, %d, NULL), (7, %d, NULL)"
+        .format(Double.MaxValue.longValue(), Double.MinValue.longValue())
+    val query_sql =
+      "select cast(d as decimal(1, 0)), cast(d as decimal(9, 1)), cast((f-55.12345) as decimal(9,1)), cast(f as decimal(4,2)), " +
+        "cast(f as decimal(32, 3)), cast(f as decimal(2, 1)), cast(d as decimal(38,3)) from test_tbl_8343"
+    spark.sql(create_table_sql);
+    spark.sql(insert_data_sql);
+    compareResultsAgainstVanillaSpark(query_sql, true, { _ => })
+    spark.sql("drop table test_tbl_8343")
+  }
+
 }
 // scalastyle:on line.size.limit

@@ -56,7 +56,7 @@ struct EmitInfo {
 };
 
 /// Helper function to extract the attributes required to create a ProjectNode
-/// used for interpretting Substrait Emit.
+/// used for interpreting Substrait Emit.
 EmitInfo getEmitInfo(const ::substrait::RelCommon& relCommon, const core::PlanNodePtr& node) {
   const auto& emit = relCommon.emit();
   int emitSize = emit.output_mapping_size();
@@ -514,11 +514,12 @@ std::shared_ptr<connector::hive::LocationHandle> makeLocationHandle(
     const std::string& targetDirectory,
     dwio::common::FileFormat fileFormat,
     common::CompressionKind compression,
+    const bool& isBucketed,
     const std::optional<std::string>& writeDirectory = std::nullopt,
     const connector::hive::LocationHandle::TableType& tableType =
         connector::hive::LocationHandle::TableType::kExisting) {
   std::string targetFileName = "";
-  if (fileFormat == dwio::common::FileFormat::PARQUET) {
+  if (fileFormat == dwio::common::FileFormat::PARQUET && !isBucketed) {
     targetFileName = fmt::format("gluten-part-{}{}{}", makeUuid(), compressionFileNameSuffix(compression), ".parquet");
   }
   return std::make_shared<connector::hive::LocationHandle>(
@@ -607,6 +608,35 @@ core::PlanNodePtr SubstraitToVeloxPlanConverter::toVeloxPlan(const ::substrait::
     }
   }
 
+  std::shared_ptr<connector::hive::HiveBucketProperty> bucketProperty = nullptr;
+  if (writeRel.has_bucket_spec()) {
+    const auto& bucketSpec = writeRel.bucket_spec();
+    const auto& numBuckets = bucketSpec.num_buckets();
+
+    std::vector<std::string> bucketedBy;
+    for (const auto& name : bucketSpec.bucket_column_names()) {
+      bucketedBy.emplace_back(name);
+    }
+
+    std::vector<TypePtr> bucketedTypes;
+    bucketedTypes.reserve(bucketedBy.size());
+    std::vector<TypePtr> tableColumnTypes = inputType->children();
+    for (const auto& name : bucketedBy) {
+      auto it = std::find(tableColumnNames.begin(), tableColumnNames.end(), name);
+      VELOX_CHECK(it != tableColumnNames.end(), "Invalid bucket {}", name);
+      std::size_t index = std::distance(tableColumnNames.begin(), it);
+      bucketedTypes.emplace_back(tableColumnTypes[index]);
+    }
+
+    std::vector<std::shared_ptr<const connector::hive::HiveSortingColumn>> sortedBy;
+    for (const auto& name : bucketSpec.sort_column_names()) {
+      sortedBy.emplace_back(std::make_shared<connector::hive::HiveSortingColumn>(name, core::SortOrder{true, true}));
+    }
+
+    bucketProperty = std::make_shared<connector::hive::HiveBucketProperty>(
+        connector::hive::HiveBucketProperty::Kind::kHiveCompatible, numBuckets, bucketedBy, bucketedTypes, sortedBy);
+  }
+
   std::string writePath;
   if (writeFilesTempPath_.has_value()) {
     writePath = writeFilesTempPath_.value();
@@ -652,8 +682,8 @@ core::PlanNodePtr SubstraitToVeloxPlanConverter::toVeloxPlan(const ::substrait::
               tableColumnNames, /*inputType->names() clolumn name is different*/
               inputType->children(),
               partitionedKey,
-              nullptr /*bucketProperty*/,
-              makeLocationHandle(writePath, fileFormat, compressionCodec),
+              bucketProperty,
+              makeLocationHandle(writePath, fileFormat, compressionCodec, bucketProperty != nullptr),
               fileFormat,
               compressionCodec)),
       (!partitionedKey.empty()),
@@ -1435,18 +1465,18 @@ void SubstraitToVeloxPlanConverter::extractJoinKeys(
     const ::substrait::Expression& joinExpression,
     std::vector<const ::substrait::Expression::FieldReference*>& leftExprs,
     std::vector<const ::substrait::Expression::FieldReference*>& rightExprs) {
-  std::vector<const ::substrait::Expression*> expressions;
-  expressions.push_back(&joinExpression);
+  std::stack<const ::substrait::Expression*> expressions;
+  expressions.push(&joinExpression);
   while (!expressions.empty()) {
-    auto visited = expressions.back();
-    expressions.pop_back();
+    auto visited = expressions.top();
+    expressions.pop();
     if (visited->rex_type_case() == ::substrait::Expression::RexTypeCase::kScalarFunction) {
       const auto& funcName = SubstraitParser::getNameBeforeDelimiter(
           SubstraitParser::findVeloxFunction(functionMap_, visited->scalar_function().function_reference()));
       const auto& args = visited->scalar_function().arguments();
       if (funcName == "and") {
-        expressions.push_back(&args[0].value());
-        expressions.push_back(&args[1].value());
+        expressions.push(&args[1].value());
+        expressions.push(&args[0].value());
       } else if (funcName == "eq" || funcName == "equalto" || funcName == "decimal_equalto") {
         VELOX_CHECK(std::all_of(args.cbegin(), args.cend(), [](const ::substrait::FunctionArgument& arg) {
           return arg.value().has_selection();
