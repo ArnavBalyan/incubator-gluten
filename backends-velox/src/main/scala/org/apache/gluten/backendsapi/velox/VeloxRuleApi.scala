@@ -23,7 +23,6 @@ import org.apache.gluten.extension._
 import org.apache.gluten.extension.columnar._
 import org.apache.gluten.extension.columnar.MiscColumnarRules.{RemoveGlutenTableCacheColumnarToRow, RemoveTopmostColumnarToRow, RewriteSubqueryBroadcast}
 import org.apache.gluten.extension.columnar.enumerated.{RasOffload, RemoveSort}
-import org.apache.gluten.extension.columnar.enumerated.planner.cost.{LegacyCoster, RoughCoster, RoughCoster2}
 import org.apache.gluten.extension.columnar.heuristic.{ExpandFallbackPolicy, HeuristicTransform}
 import org.apache.gluten.extension.columnar.offload.{OffloadExchange, OffloadJoin, OffloadOthers}
 import org.apache.gluten.extension.columnar.rewrite._
@@ -102,11 +101,10 @@ object VeloxRuleApi {
     injector.injectPostTransform(c => InsertTransitions.create(c.outputsColumnar, VeloxBatch))
 
     // Gluten columnar: Fallback policies.
-    injector.injectFallbackPolicy(
-      c => ExpandFallbackPolicy(c.ac.isAdaptiveContext(), c.ac.originalPlan()))
+    injector.injectFallbackPolicy(c => p => ExpandFallbackPolicy(c.caller.isAqe(), p))
 
     // Gluten columnar: Post rules.
-    injector.injectPost(c => RemoveTopmostColumnarToRow(c.session, c.ac.isAdaptiveContext()))
+    injector.injectPost(c => RemoveTopmostColumnarToRow(c.session, c.caller.isAqe()))
     SparkShimLoader.getSparkShims
       .getExtendedColumnarPostRules()
       .foreach(each => injector.injectPost(c => each(c.session)))
@@ -115,6 +113,7 @@ object VeloxRuleApi {
 
     // Gluten columnar: Final rules.
     injector.injectFinal(c => RemoveGlutenTableCacheColumnarToRow(c.session))
+    injector.injectFinal(c => GlutenAutoAdjustStageResourceProfile(c.glutenConf, c.session))
     injector.injectFinal(c => GlutenFallbackReporter(c.glutenConf, c.session))
     injector.injectFinal(_ => RemoveFallbackTagRule())
   }
@@ -131,6 +130,7 @@ object VeloxRuleApi {
 
     // Gluten RAS: The RAS rule.
     val validatorBuilder: GlutenConfig => Validator = conf => Validators.newValidator(conf)
+    injector.injectRasRule(_ => RemoveSort)
     val rewrites =
       Seq(
         RewriteIn,
@@ -139,10 +139,6 @@ object VeloxRuleApi {
         PullOutPreProject,
         PullOutPostProject,
         ProjectColumnPruning)
-    injector.injectCoster(_ => LegacyCoster)
-    injector.injectCoster(_ => RoughCoster)
-    injector.injectCoster(_ => RoughCoster2)
-    injector.injectRasRule(_ => RemoveSort)
     val offloads: Seq[RasOffload] = Seq(
       RasOffload.from[Exchange](OffloadExchange()),
       RasOffload.from[BaseJoinExec](OffloadJoin()),
@@ -165,7 +161,8 @@ object VeloxRuleApi {
       RasOffload.from[LimitExec](OffloadOthers()),
       RasOffload.from[GenerateExec](OffloadOthers()),
       RasOffload.from[EvalPythonExec](OffloadOthers()),
-      RasOffload.from[SampleExec](OffloadOthers())
+      RasOffload.from[SampleExec](OffloadOthers()),
+      RasOffload.from[RangeExec](OffloadOthers())
     )
     offloads.foreach(
       offload =>
@@ -184,14 +181,14 @@ object VeloxRuleApi {
     injector.injectPostTransform(_ => CollapseProjectExecTransformer)
     injector.injectPostTransform(c => FlushableHashAggregateRule.apply(c.session))
     injector.injectPostTransform(c => InsertTransitions.create(c.outputsColumnar, VeloxBatch))
-    injector.injectPostTransform(
-      c => RemoveTopmostColumnarToRow(c.session, c.ac.isAdaptiveContext()))
+    injector.injectPostTransform(c => RemoveTopmostColumnarToRow(c.session, c.caller.isAqe()))
     SparkShimLoader.getSparkShims
       .getExtendedColumnarPostRules()
       .foreach(each => injector.injectPostTransform(c => each(c.session)))
     injector.injectPostTransform(c => ColumnarCollapseTransformStages(c.glutenConf))
     injector.injectPostTransform(c => GlutenNoopWriterRule(c.session))
     injector.injectPostTransform(c => RemoveGlutenTableCacheColumnarToRow(c.session))
+    injector.injectPostTransform(c => GlutenAutoAdjustStageResourceProfile(c.glutenConf, c.session))
     injector.injectPostTransform(c => GlutenFallbackReporter(c.glutenConf, c.session))
     injector.injectPostTransform(_ => RemoveFallbackTagRule())
   }

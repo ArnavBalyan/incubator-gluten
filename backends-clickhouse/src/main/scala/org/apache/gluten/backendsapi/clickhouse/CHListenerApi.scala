@@ -23,6 +23,7 @@ import org.apache.gluten.execution.CHBroadcastBuildSideCache
 import org.apache.gluten.execution.datasource.GlutenFormatFactory
 import org.apache.gluten.expression.UDFMappings
 import org.apache.gluten.extension.ExpressionExtensionTrait
+import org.apache.gluten.extension.columnar.transition.Convention
 import org.apache.gluten.jni.JniLibLoader
 import org.apache.gluten.vectorized.CHNativeExpressionEvaluator
 
@@ -49,7 +50,7 @@ class CHListenerApi extends ListenerApi with Logging {
     initialize(pc.conf, isDriver = true)
 
     val expressionExtensionTransformer = ExpressionUtil.extendedExpressionTransformer(
-      pc.conf.get(GlutenConfig.GLUTEN_EXTENDED_EXPRESSION_TRAN_CONF, "")
+      pc.conf.get(GlutenConfig.EXTENDED_EXPRESSION_TRAN_CONF.key, "")
     )
     if (expressionExtensionTransformer != null) {
       ExpressionExtensionTrait.expressionExtensionTransformer = expressionExtensionTransformer
@@ -70,10 +71,12 @@ class CHListenerApi extends ListenerApi with Logging {
   override def onExecutorShutdown(): Unit = shutdown()
 
   private def initialize(conf: SparkConf, isDriver: Boolean): Unit = {
-    // Force batch type initializations.
+    // Do row / batch type initializations.
+    Convention.ensureSparkRowAndBatchTypesRegistered()
     CHBatch.ensureRegistered()
     SparkDirectoryUtil.init(conf)
-    val libPath = conf.get(GlutenConfig.GLUTEN_LIB_PATH, StringUtils.EMPTY)
+    val libPath =
+      conf.get(GlutenConfig.GLUTEN_LIB_PATH.key, GlutenConfig.GLUTEN_LIB_PATH.defaultValueString)
     if (StringUtils.isBlank(libPath)) {
       throw new IllegalArgumentException(
         "Please set spark.gluten.sql.columnar.libpath to enable clickhouse backend")
@@ -81,11 +84,11 @@ class CHListenerApi extends ListenerApi with Logging {
     if (isDriver) {
       JniLibLoader.loadFromPath(libPath, true)
     } else {
-      val executorLibPath = conf.get(GlutenConfig.GLUTEN_EXECUTOR_LIB_PATH, libPath)
+      val executorLibPath = conf.get(GlutenConfig.GLUTEN_EXECUTOR_LIB_PATH.key, libPath)
       JniLibLoader.loadFromPath(executorLibPath, true)
     }
     // Add configs
-    import org.apache.gluten.backendsapi.clickhouse.CHConf._
+    import org.apache.gluten.backendsapi.clickhouse.CHConfig._
     conf.setCHConfig(
       "timezone" -> conf.get("spark.sql.session.timeZone", TimeZone.getDefault.getID),
       "local_engine.settings.log_processors_profiles" -> "true")

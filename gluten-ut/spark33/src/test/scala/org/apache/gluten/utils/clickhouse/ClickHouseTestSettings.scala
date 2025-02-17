@@ -243,7 +243,6 @@ class ClickHouseTestSettings extends BackendTestSettings {
     .exclude("SPARK-28067: Aggregate sum should not return wrong results for decimal overflow")
     .exclude("SPARK-35955: Aggregate avg should not return wrong results for decimal overflow")
     .exclude("describe")
-    .exclude("SPARK-34165: Add count_distinct to summary")
     .exclude("getRows: array")
     .exclude("showString: array")
     .exclude("showString: array, vertical = true")
@@ -385,16 +384,9 @@ class ClickHouseTestSettings extends BackendTestSettings {
   enableSuite[GlutenJoinSuite].exclude(
     "SPARK-36794: Ignore duplicated key when building relation for semi/anti hash join")
   enableSuite[GlutenJsonExpressionsSuite]
-    .exclude("$.store.book[*]")
-    .exclude("$.store.book[*].category")
-    .exclude("$.store.book[*].isbn")
-    .exclude("$.store.basket[*]")
-    .exclude("$.store.basket[*][0]")
-    .exclude("$.store.basket[0][*]")
-    .exclude("$.store.basket[*][*]")
-    .exclude("$.store.basket[0][*].b")
-    .exclude("$.zip code")
-    .exclude("$.fb:testid")
+    .exclude(
+      "$.store.basket[0][*].b"
+    ) // issue: https://github.com/apache/incubator-gluten/issues/8529
     .exclude("from_json - invalid data")
     .exclude("from_json - input=object, schema=array, output=array of single row")
     .exclude("from_json - input=empty object, schema=array, output=array of single row with null")
