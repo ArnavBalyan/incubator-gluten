@@ -17,6 +17,7 @@
 package org.apache.gluten.utils
 
 import org.apache.gluten.extension.ValidationResult
+import org.apache.gluten.sql.shims.SparkShimLoader
 import org.apache.gluten.substrait.rel.LocalFilesNode.ReadFileFormat
 import org.apache.gluten.substrait.rel.LocalFilesNode.ReadFileFormat.ParquetReadFormat
 
@@ -24,8 +25,6 @@ import org.apache.spark.util.SerializableConfiguration
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, LocatedFileStatus, Path, RemoteIterator}
-import org.apache.parquet.crypto.ParquetCryptoRuntimeException
-import org.apache.parquet.hadoop.ParquetFileReader
 
 object ParquetMetadataUtils {
 
@@ -47,7 +46,8 @@ object ParquetMetadataUtils {
   def validateEncryption(
       format: ReadFileFormat,
       rootPaths: Seq[String],
-      serializableHadoopConf: Option[SerializableConfiguration]
+      serializableHadoopConf: Option[SerializableConfiguration],
+      fileLimit: Int
   ): ValidationResult = {
     if (format != ParquetReadFormat || rootPaths.isEmpty) {
       return ValidationResult.succeeded
@@ -60,7 +60,7 @@ object ParquetMetadataUtils {
         val fs = new Path(rootPath).getFileSystem(conf)
         try {
           val encryptionDetected =
-            checkForEncryptionWithLimit(fs, new Path(rootPath), conf, fileLimit = 10)
+            checkForEncryptionWithLimit(fs, new Path(rootPath), conf, fileLimit = fileLimit)
           if (encryptionDetected) {
             return ValidationResult.failed("Encrypted Parquet file detected.")
           }
@@ -98,38 +98,9 @@ object ParquetMetadataUtils {
     while (filesIterator.hasNext && checkedFileCount < fileLimit) {
       val fileStatus = filesIterator.next()
       checkedFileCount += 1
-      try {
-        ParquetFileReader.readFooter(conf, fileStatus.getPath).toString
-      } catch {
-        case e: Exception if hasCause(e, classOf[ParquetCryptoRuntimeException]) =>
-          return true
-        case e: Exception =>
-      }
-    }
-    false
-  }
-
-  /**
-   * Utility to check the exception for the specified type. Parquet 1.12 does not provide direct
-   * utility to check for encryption. Newer versions provide utility to check encryption from read
-   * footer which can be used in the future once Spark brings it in.
-   *
-   * @param throwable
-   *   Exception to check
-   * @param causeType
-   *   Class of the cause to look for
-   * @tparam T
-   *   Type of the cause
-   * @return
-   *   True if the cause is found; false otherwise
-   */
-  private def hasCause[T <: Throwable](throwable: Throwable, causeType: Class[T]): Boolean = {
-    var current = throwable
-    while (current != null) {
-      if (causeType.isInstance(current)) {
+      if (SparkShimLoader.getSparkShims.isParquetFileEncrypted(fileStatus, conf)) {
         return true
       }
-      current = current.getCause
     }
     false
   }

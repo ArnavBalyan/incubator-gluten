@@ -20,11 +20,12 @@ import org.apache.gluten.GlutenBuildInfo._
 import org.apache.gluten.backendsapi._
 import org.apache.gluten.columnarbatch.VeloxBatch
 import org.apache.gluten.component.Component.BuildInfo
-import org.apache.gluten.config.GlutenConfig
+import org.apache.gluten.config.{GlutenConfig, VeloxConfig}
 import org.apache.gluten.exception.GlutenNotSupportException
 import org.apache.gluten.execution.WriteFilesExecTransformer
 import org.apache.gluten.expression.WindowFunctionsBuilder
 import org.apache.gluten.extension.ValidationResult
+import org.apache.gluten.extension.columnar.cost.{LegacyCoster, LongCoster, RoughCoster}
 import org.apache.gluten.extension.columnar.transition.{Convention, ConventionFunc}
 import org.apache.gluten.sql.shims.SparkShimLoader
 import org.apache.gluten.substrait.rel.LocalFilesNode
@@ -34,7 +35,7 @@ import org.apache.gluten.utils._
 
 import org.apache.spark.sql.catalyst.catalog.BucketSpec
 import org.apache.spark.sql.catalyst.expressions.{Alias, CumeDist, DenseRank, Descending, Expression, Lag, Lead, NamedExpression, NthValue, NTile, PercentRank, RangeFrame, Rank, RowNumber, SortOrder, SpecialFrameBoundary, SpecifiedWindowFrame}
-import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression, ApproximatePercentile, Percentile}
+import org.apache.spark.sql.catalyst.expressions.aggregate.{AggregateExpression, ApproximatePercentile, HyperLogLogPlusPlus, Percentile}
 import org.apache.spark.sql.catalyst.plans.{JoinType, LeftOuter, RightOuter}
 import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, CharVarcharUtils}
 import org.apache.spark.sql.connector.read.Scan
@@ -61,7 +62,6 @@ class VeloxBackend extends SubstraitBackend {
   override def name(): String = VeloxBackend.BACKEND_NAME
   override def buildInfo(): BuildInfo =
     BuildInfo("Velox", VELOX_BRANCH, VELOX_REVISION, VELOX_REVISION_TIME)
-  override def convFuncOverride(): ConventionFunc.Override = new ConvFunc()
   override def iteratorApi(): IteratorApi = new VeloxIteratorApi
   override def sparkPlanExecApi(): SparkPlanExecApi = new VeloxSparkPlanExecApi
   override def transformerApi(): TransformerApi = new VeloxTransformerApi
@@ -70,6 +70,8 @@ class VeloxBackend extends SubstraitBackend {
   override def listenerApi(): ListenerApi = new VeloxListenerApi
   override def ruleApi(): RuleApi = new VeloxRuleApi
   override def settings(): BackendSettingsApi = VeloxBackendSettings
+  override def convFuncOverride(): ConventionFunc.Override = new ConvFunc()
+  override def costers(): Seq[LongCoster] = Seq(LegacyCoster, RoughCoster)
 }
 
 object VeloxBackend {
@@ -164,8 +166,8 @@ object VeloxBackendSettings extends BackendSettingsApi {
           }
         case DwrfReadFormat => None
         case OrcReadFormat =>
-          if (!GlutenConfig.get.veloxOrcScanEnabled) {
-            Some(s"Velox ORC scan is turned off, ${GlutenConfig.VELOX_ORC_SCAN_ENABLED.key}")
+          if (!VeloxConfig.get.veloxOrcScanEnabled) {
+            Some(s"Velox ORC scan is turned off, ${VeloxConfig.VELOX_ORC_SCAN_ENABLED.key}")
           } else {
             val typeValidator: PartialFunction[StructField, String] = {
               case StructField(_, arrayType: ArrayType, _, _)
@@ -198,8 +200,13 @@ object VeloxBackendSettings extends BackendSettingsApi {
         return None
       }
 
+      val fileLimit = GlutenConfig.get.parquetEncryptionValidationFileLimit
       val encryptionResult =
-        ParquetMetadataUtils.validateEncryption(format, rootPaths, serializableHadoopConf)
+        ParquetMetadataUtils.validateEncryption(
+          format,
+          rootPaths,
+          serializableHadoopConf,
+          fileLimit)
       if (encryptionResult.ok()) {
         None
       } else {
@@ -393,10 +400,6 @@ object VeloxBackendSettings extends BackendSettingsApi {
     true
   }
 
-  override def supportNativeMetadataColumns(): Boolean = true
-
-  override def supportNativeRowIndexColumn(): Boolean = true
-
   override def supportExpandExec(): Boolean = true
 
   override def supportSortExec(): Boolean = true
@@ -473,7 +476,8 @@ object VeloxBackendSettings extends BackendSettingsApi {
             case l: Lead if !l.input.foldable =>
             case aggrExpr: AggregateExpression
                 if !aggrExpr.aggregateFunction.isInstanceOf[ApproximatePercentile]
-                  && !aggrExpr.aggregateFunction.isInstanceOf[Percentile] =>
+                  && !aggrExpr.aggregateFunction.isInstanceOf[Percentile]
+                  && !aggrExpr.aggregateFunction.isInstanceOf[HyperLogLogPlusPlus] =>
             case _ =>
               allSupported = false
           }
@@ -540,7 +544,7 @@ object VeloxBackendSettings extends BackendSettingsApi {
   override def alwaysFailOnMapExpression(): Boolean = true
 
   override def requiredChildOrderingForWindow(): Boolean = {
-    GlutenConfig.get.veloxColumnarWindowType.equals("streaming")
+    VeloxConfig.get.veloxColumnarWindowType.equals("streaming")
   }
 
   override def requiredChildOrderingForWindowGroupLimit(): Boolean = false
@@ -574,4 +578,7 @@ object VeloxBackendSettings extends BackendSettingsApi {
   override def supportColumnarArrowUdf(): Boolean = true
 
   override def needPreComputeRangeFrameBoundary(): Boolean = true
+
+  override def supportRangeExec(): Boolean = true
+
 }

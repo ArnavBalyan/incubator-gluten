@@ -136,6 +136,14 @@ case class CHHashAggregateExecTransformer(
     }
   }
 
+  // CH does not support duplicate columns in a block. So there should not be duplicate attributes
+  // in child's output.
+  // There is an exception case, when a shuffle result is reused, the child's output may contain
+  // duplicate columns. It's mismatched with the the real output of CH.
+  protected lazy val childOutput: Seq[Attribute] = {
+    child.output
+  }
+
   override protected def doTransform(context: SubstraitContext): TransformContext = {
     val childCtx = child.asInstanceOf[TransformSupport].transform(context)
     val operatorId = context.nextOperatorId(this.nodeName)
@@ -168,12 +176,12 @@ case class CHHashAggregateExecTransformer(
         if (modes.isEmpty || modes.forall(_ == Complete)) {
           // When there is no aggregate function or there is complete mode, it does not need
           // to handle outputs according to the AggregateMode
-          for (attr <- child.output) {
+          for (attr <- childOutput) {
             typeList.add(ConverterUtils.getTypeNode(attr.dataType, attr.nullable))
             nameList.add(ConverterUtils.genColumnNameWithExprId(attr))
             nameList.addAll(ConverterUtils.collectStructFieldNames(attr.dataType))
           }
-          (child.output, output)
+          (childOutput, output)
         } else if (!modes.contains(Partial)) {
           // non-partial mode
           var resultAttrIndex = 0
@@ -193,13 +201,13 @@ case class CHHashAggregateExecTransformer(
           (aggregateResultAttributes, output)
         } else {
           // partial mode
-          for (attr <- child.output) {
+          for (attr <- childOutput) {
             typeList.add(ConverterUtils.getTypeNode(attr.dataType, attr.nullable))
             nameList.add(ConverterUtils.genColumnNameWithExprId(attr))
             nameList.addAll(ConverterUtils.collectStructFieldNames(attr.dataType))
           }
 
-          (child.output, aggregateResultAttributes)
+          (childOutput, aggregateResultAttributes)
         }
       }
 
@@ -238,7 +246,7 @@ case class CHHashAggregateExecTransformer(
         // Use 'child.output' as based Seq[Attribute], the originalInputAttributes
         // may be different for each backend.
         val exprNode = ExpressionConverter
-          .replaceWithExpressionTransformer(expr, child.output)
+          .replaceWithExpressionTransformer(expr, childOutput)
           .doTransform(args)
         groupingList.add(exprNode)
       })
@@ -258,7 +266,7 @@ case class CHHashAggregateExecTransformer(
       aggExpr => {
         if (aggExpr.filter.isDefined) {
           val exprNode = ExpressionConverter
-            .replaceWithExpressionTransformer(aggExpr.filter.get, child.output)
+            .replaceWithExpressionTransformer(aggExpr.filter.get, childOutput)
             .doTransform(args)
           aggFilterList.add(exprNode)
         } else {
@@ -269,12 +277,24 @@ case class CHHashAggregateExecTransformer(
         val childrenNodeList = new util.ArrayList[ExpressionNode]()
         val childrenNodes = aggExpr.mode match {
           case Partial | Complete =>
-            aggregateFunc.children.toList.map(
+            val nodes = aggregateFunc.children.toList.map(
               expr => {
                 ExpressionConverter
-                  .replaceWithExpressionTransformer(expr, child.output)
+                  .replaceWithExpressionTransformer(expr, childOutput)
                   .doTransform(args)
               })
+
+            val extraNodes = aggregateFunc match {
+              case hll: HyperLogLogPlusPlus =>
+                val relativeSDLiteral = Literal(hll.relativeSD)
+                Seq(
+                  ExpressionConverter
+                    .replaceWithExpressionTransformer(relativeSDLiteral, child.output)
+                    .doTransform(args))
+              case _ => Seq.empty
+            }
+
+            nodes ++ extraNodes
           case PartialMerge if distinct_modes.contains(Partial) =>
             // this is the case where PartialMerge co-exists with Partial
             // so far, it only happens in a three-stage count distinct case
@@ -437,6 +457,12 @@ case class CHHashAggregateExecTransformer(
               fields = fields :+ (
                 percentile.percentageExpression.dataType,
                 percentile.percentageExpression.nullable)
+              (makeStructType(fields), attr.nullable)
+            case hllpp: HyperLogLogPlusPlus =>
+              var fields = Seq[(DataType, Boolean)]()
+              fields = fields :+ (hllpp.child.dataType, hllpp.child.nullable)
+              val relativeSDLiteral = Literal(hllpp.relativeSD)
+              fields = fields :+ (relativeSDLiteral.dataType, false)
               (makeStructType(fields), attr.nullable)
             case _ =>
               (makeStructTypeSingleOne(attr.dataType, attr.nullable), attr.nullable)

@@ -18,7 +18,6 @@ package org.apache.spark.sql.execution.benchmarks
 
 import org.apache.gluten.config.GlutenConfig
 import org.apache.gluten.jni.JniLibLoader
-import org.apache.gluten.utils.UTSystemParameters
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.delta.DeltaLog
@@ -32,7 +31,6 @@ trait CHSqlBasedBenchmark extends SqlBasedBenchmark {
   def getSparkConf: SparkConf = {
     val conf = new SparkConf()
       .setAppName(appName)
-      .setIfMissing(GlutenConfig.GLUTEN_LIB_PATH, UTSystemParameters.clickHouseLibPath)
       .setIfMissing("spark.master", s"local[$thrdNum]")
       .set("spark.plugins", "org.apache.gluten.GlutenPlugin")
       .set(
@@ -43,7 +41,6 @@ trait CHSqlBasedBenchmark extends SqlBasedBenchmark {
       .set("spark.databricks.delta.snapshotPartitions", "1")
       .set("spark.databricks.delta.properties.defaults.checkpointInterval", "5")
       .set("spark.databricks.delta.stalenessLimit", "3600000")
-      .set("spark.gluten.sql.columnar.columnarToRow", "true")
       .set("spark.gluten.sql.enable.native.validation", "false")
       .set("spark.sql.adaptive.enabled", "false")
       .setIfMissing("spark.memory.offHeap.size", offheapSize)
@@ -58,8 +55,7 @@ trait CHSqlBasedBenchmark extends SqlBasedBenchmark {
 
   override def afterAll(): Unit = {
     DeltaLog.clearCache()
-    val libPath = spark.conf.get(GlutenConfig.GLUTEN_LIB_PATH, UTSystemParameters.clickHouseLibPath)
-    JniLibLoader.unloadFromPath(libPath)
+    JniLibLoader.unloadFromPath(spark.conf.get(GlutenConfig.GLUTEN_LIB_PATH.key))
     // Wait for Ctrl+C, convenient for seeing Spark UI
     // Thread.sleep(600000)
     super.afterAll()

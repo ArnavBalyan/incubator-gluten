@@ -27,6 +27,7 @@
 #include "utils/ConfigExtractor.h"
 
 #include "config/GlutenConfig.h"
+#include "config/VeloxConfig.h"
 #include "operators/plannodes/RowVectorStream.h"
 
 namespace gluten {
@@ -666,8 +667,6 @@ core::PlanNodePtr SubstraitToVeloxPlanConverter::toVeloxPlan(const ::substrait::
     }
   }
 
-  // Do not hard-code connector ID and allow for connectors other than Hive.
-  static const std::string kHiveConnectorId = "test-hive";
   // Currently only support parquet format.
   dwio::common::FileFormat fileFormat = dwio::common::FileFormat::PARQUET;
 
@@ -1206,6 +1205,24 @@ core::PlanNodePtr SubstraitToVeloxPlanConverter::constructValueStreamNode(
   return node;
 }
 
+core::PlanNodePtr SubstraitToVeloxPlanConverter::constructValuesNode(
+    const ::substrait::ReadRel& readRel,
+    int32_t streamIdx) {
+  std::vector<RowVectorPtr> values;
+  VELOX_CHECK_LT(streamIdx, inputIters_.size(), "Could not find stream index {} in input iterator list.", streamIdx);
+  const auto iterator = inputIters_[streamIdx];
+  while (iterator->hasNext()) {
+    auto cb = VeloxColumnarBatch::from(defaultLeafVeloxMemoryPool().get(), iterator->next());
+    values.emplace_back(cb->getRowVector());
+  }
+  auto node = std::make_shared<facebook::velox::core::ValuesNode>(nextPlanNodeId(), std::move(values));
+
+  auto splitInfo = std::make_shared<SplitInfo>();
+  splitInfo->isStream = true;
+  splitInfoMap_[node->id()] = splitInfo;
+  return node;
+}
+
 core::PlanNodePtr SubstraitToVeloxPlanConverter::toVeloxPlan(const ::substrait::ReadRel& readRel) {
   // emit is not allowed in TableScanNode and ValuesNode related
   // outputs
@@ -1217,7 +1234,12 @@ core::PlanNodePtr SubstraitToVeloxPlanConverter::toVeloxPlan(const ::substrait::
   // Check if the ReadRel specifies an input of stream. If yes, build ValueStreamNode as the data source.
   auto streamIdx = getStreamIndex(readRel);
   if (streamIdx >= 0) {
-    return constructValueStreamNode(readRel, streamIdx);
+    // Only used in benchmark enable query trace, replace ValueStreamNode to ValuesNode to support serialization.
+    if (LIKELY(confMap_[kQueryTraceEnabled] != "true")) {
+      return constructValueStreamNode(readRel, streamIdx);
+    } else {
+      return constructValuesNode(readRel, streamIdx);
+    }
   }
 
   // Otherwise, will create TableScan node for ReadRel.
@@ -1249,17 +1271,14 @@ core::PlanNodePtr SubstraitToVeloxPlanConverter::toVeloxPlan(const ::substrait::
     SubstraitParser::parseColumnTypes(baseSchema, columnTypes);
   }
 
-  // Do not hard-code connector ID and allow for connectors other than Hive.
-  static const std::string kHiveConnectorId = "test-hive";
-
   // Velox requires Filter Pushdown must being enabled.
   bool filterPushdownEnabled = true;
   std::shared_ptr<connector::hive::HiveTableHandle> tableHandle;
   if (!readRel.has_filter()) {
     tableHandle = std::make_shared<connector::hive::HiveTableHandle>(
-        kHiveConnectorId, "hive_table", filterPushdownEnabled, connector::hive::SubfieldFilters{}, nullptr);
+        kHiveConnectorId, "hive_table", filterPushdownEnabled, common::SubfieldFilters{}, nullptr);
   } else {
-    connector::hive::SubfieldFilters subfieldFilters;
+    common::SubfieldFilters subfieldFilters;
     auto names = colNameList;
     auto types = veloxTypeList;
     auto remainingFilter = exprConverter_->toVeloxExpr(readRel.filter(), ROW(std::move(names), std::move(types)));
