@@ -13,8 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_library(myudf SHARED "MyUDF.cc")
-target_link_libraries(myudf velox)
-
-add_library(myudaf SHARED "MyUDAF.cc")
-target_link_libraries(myudaf velox)
+set(SOURCES
+    Registry.cc
+    UDFBootstrap.cc
+    HiveStringString.cc
+)
+add_library(UdfFramework SHARED ${SOURCES})
+target_link_libraries(UdfFramework velox)
