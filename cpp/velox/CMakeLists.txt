@@ -336,9 +336,7 @@ if(ENABLE_ABFS)
   target_link_libraries(velox PUBLIC Azure::azure-identity)
 endif()
 
-if(BUILD_EXAMPLES)
-  add_subdirectory(udf/examples)
-endif()
+add_subdirectory(udf/udf-lib)
 
 add_custom_command(
   TARGET velox

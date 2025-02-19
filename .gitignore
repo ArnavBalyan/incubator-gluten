@@ -1,6 +1,8 @@
 
 .arcconfig
 
+.idea/vcs.xml
+
 **/target/**
 *.class
 *.iml
