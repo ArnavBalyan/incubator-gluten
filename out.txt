@@ -1,0 +1,398 @@
+total 1249288
+drwxrwxrwx  1 arnavb user      20480 Feb 20 09:57 .
+drwxr-xr-x  1 arnavb user       4096 Feb 19 18:38 ..
+drwxrwxrwx  3 root   root       4096 Feb 19 18:48 aws-c-auth
+drwxrwxrwx  3 root   root       4096 Feb 19 18:48 aws-c-cal
+drwxrwxrwx  3 root   root       4096 Feb 19 18:48 aws-c-common
+drwxrwxrwx  3 root   root       4096 Feb 19 18:48 aws-c-compression
+drwxrwxrwx  3 root   root       4096 Feb 19 18:48 aws-c-event-stream
+drwxrwxrwx  3 root   root       4096 Feb 19 18:48 aws-checksums
+drwxrwxrwx  3 root   root       4096 Feb 19 18:48 aws-c-http
+drwxrwxrwx  3 root   root       4096 Feb 19 18:48 aws-c-io
+drwxrwxrwx  3 root   root       4096 Feb 19 18:48 aws-c-mqtt
+drwxrwxrwx  3 root   root       4096 Feb 19 18:48 aws-crt-cpp
+drwxrwxrwx  3 root   root       4096 Feb 19 18:48 aws-c-s3
+drwxrwxrwx  3 root   root       4096 Feb 19 18:48 aws-c-sdkutils
+drwxrwxrwx 74 arnavb user       4096 Feb 20 02:47 cmake
+drwxrwxrwx  3 root   root       4096 Feb 19 18:38 gcc
+-rwxrwxrwx  1 root   root       6564 Jun  6  2024 libabsl_bad_any_cast_impl.a
+-rwxrwxrwx  1 root   root       6154 Jun  6  2024 libabsl_bad_optional_access.a
+-rwxrwxrwx  1 root   root       6356 Jun  6  2024 libabsl_bad_variant_access.a
+-rwxrwxrwx  1 root   root      92422 Jun  6  2024 libabsl_base.a
+-rwxrwxrwx  1 root   root      17832 Jun  6  2024 libabsl_city.a
+-rwxrwxrwx  1 root   root      31326 Jun  6  2024 libabsl_civil_time.a
+-rwxrwxrwx  1 root   root     894072 Jun  6  2024 libabsl_cord.a
+-rwxrwxrwx  1 root   root     303410 Jun  6  2024 libabsl_cord_internal.a
+-rwxrwxrwx  1 root   root       6792 Jun  6  2024 libabsl_cordz_functions.a
+-rwxrwxrwx  1 root   root      92790 Jun  6  2024 libabsl_cordz_handle.a
+-rwxrwxrwx  1 root   root      75492 Jun  6  2024 libabsl_cordz_info.a
+-rwxrwxrwx  1 root   root       4518 Jun  6  2024 libabsl_cordz_sample_token.a
+-rwxrwxrwx  1 root   root      92794 Jun  6  2024 libabsl_crc32c.a
+-rwxrwxrwx  1 root   root     203308 Jun  6  2024 libabsl_crc_cord_state.a
+-rwxrwxrwx  1 root   root       6782 Jun  6  2024 libabsl_crc_cpu_detect.a
+-rwxrwxrwx  1 root   root      35448 Jun  6  2024 libabsl_crc_internal.a
+-rwxrwxrwx  1 root   root      38430 Jun  6  2024 libabsl_debugging_internal.a
+-rwxrwxrwx  1 root   root      48600 Jun  6  2024 libabsl_demangle_internal.a
+-rwxrwxrwx  1 root   root       9872 Jun  6  2024 libabsl_die_if_null.a
+-rwxrwxrwx  1 root   root       7344 Jun  6  2024 libabsl_examine_stack.a
+-rwxrwxrwx  1 root   root       4222 Jun  6  2024 libabsl_exponential_biased.a
+-rwxrwxrwx  1 root   root      15594 Jun  6  2024 libabsl_failure_signal_handler.a
+-rwxrwxrwx  1 root   root       4090 Jun  6  2024 libabsl_flags_commandlineflag.a
+-rwxrwxrwx  1 root   root       3926 Jun  6  2024 libabsl_flags_commandlineflag_internal.a
+-rwxrwxrwx  1 root   root     149292 Jun  6  2024 libabsl_flags_config.a
+-rwxrwxrwx  1 root   root     225510 Jun  6  2024 libabsl_flags_internal.a
+-rwxrwxrwx  1 root   root     274380 Jun  6  2024 libabsl_flags_marshalling.a
+-rwxrwxrwx  1 root   root     699192 Jun  6  2024 libabsl_flags_parse.a
+-rwxrwxrwx  1 root   root       3948 Jun  6  2024 libabsl_flags_private_handle_accessor.a
+-rwxrwxrwx  1 root   root      29650 Jun  6  2024 libabsl_flags_program_name.a
+-rwxrwxrwx  1 root   root     661048 Jun  6  2024 libabsl_flags_reflection.a
+-rwxrwxrwx  1 root   root      29366 Jun  6  2024 libabsl_flags_usage.a
+-rwxrwxrwx  1 root   root     490224 Jun  6  2024 libabsl_flags_usage_internal.a
+-rwxrwxrwx  1 root   root      74894 Jun  6  2024 libabsl_graphcycles_internal.a
+-rwxrwxrwx  1 root   root      12102 Jun  6  2024 libabsl_hash.a
+-rwxrwxrwx  1 root   root      55386 Jun  6  2024 libabsl_hashtablez_sampler.a
+-rwxrwxrwx  1 root   root      45382 Jun  6  2024 libabsl_int128.a
+-rwxrwxrwx  1 root   root      48974 Jun  6  2024 libabsl_kernel_timeout_internal.a
+-rwxrwxrwx  1 root   root       2810 Jun  6  2024 libabsl_leak_check.a
+-rwxrwxrwx  1 root   root       1556 Jun  6  2024 libabsl_log_entry.a
+-rwxrwxrwx  1 root   root     116174 Jun  6  2024 libabsl_log_flags.a
+-rwxrwxrwx  1 root   root      76178 Jun  6  2024 libabsl_log_globals.a
+-rwxrwxrwx  1 root   root       3888 Jun  6  2024 libabsl_log_initialize.a
+-rwxrwxrwx  1 root   root      52786 Jun  6  2024 libabsl_log_internal_check_op.a
+-rwxrwxrwx  1 root   root       8674 Jun  6  2024 libabsl_log_internal_conditions.a
+-rwxrwxrwx  1 root   root      12202 Jun  6  2024 libabsl_log_internal_fnmatch.a
+-rwxrwxrwx  1 root   root      49708 Jun  6  2024 libabsl_log_internal_format.a
+-rwxrwxrwx  1 root   root      13964 Jun  6  2024 libabsl_log_internal_globals.a
+-rwxrwxrwx  1 root   root     133908 Jun  6  2024 libabsl_log_internal_log_sink_set.a
+-rwxrwxrwx  1 root   root     251888 Jun  6  2024 libabsl_log_internal_message.a
+-rwxrwxrwx  1 root   root       1568 Jun  6  2024 libabsl_log_internal_nullguard.a
+-rwxrwxrwx  1 root   root      24816 Jun  6  2024 libabsl_log_internal_proto.a
+-rwxrwxrwx  1 root   root       4398 Jun  6  2024 libabsl_log_severity.a
+-rwxrwxrwx  1 root   root       3844 Jun  6  2024 libabsl_log_sink.a
+-rwxrwxrwx  1 root   root       8392 Jun  6  2024 libabsl_low_level_hash.a
+-rwxrwxrwx  1 root   root      43912 Jun  6  2024 libabsl_malloc_internal.a
+-rwxrwxrwx  1 root   root       4780 Jun  6  2024 libabsl_periodic_sampler.a
+-rwxrwxrwx  1 root   root     100964 Jun  6  2024 libabsl_random_distributions.a
+-rwxrwxrwx  1 root   root      59770 Jun  6  2024 libabsl_random_internal_distribution_test_util.a
+-rwxrwxrwx  1 root   root       5992 Jun  6  2024 libabsl_random_internal_platform.a
+-rwxrwxrwx  1 root   root      66280 Jun  6  2024 libabsl_random_internal_pool_urbg.a
+-rwxrwxrwx  1 root   root       4234 Jun  6  2024 libabsl_random_internal_randen.a
+-rwxrwxrwx  1 root   root       1762 Jun  6  2024 libabsl_random_internal_randen_hwaes.a
+-rwxrwxrwx  1 root   root       9074 Jun  6  2024 libabsl_random_internal_randen_hwaes_impl.a
+-rwxrwxrwx  1 root   root      15438 Jun  6  2024 libabsl_random_internal_randen_slow.a
+-rwxrwxrwx  1 root   root      22868 Jun  6  2024 libabsl_random_internal_seed_material.a
+-rwxrwxrwx  1 root   root       6978 Jun  6  2024 libabsl_random_seed_gen_exception.a
+-rwxrwxrwx  1 root   root      52706 Jun  6  2024 libabsl_random_seed_sequences.a
+-rwxrwxrwx  1 root   root      88152 Jun  6  2024 libabsl_raw_hash_set.a
+-rwxrwxrwx  1 root   root      29972 Jun  6  2024 libabsl_raw_logging_internal.a
+-rwxrwxrwx  1 root   root      14794 Jun  6  2024 libabsl_scoped_set_env.a
+-rwxrwxrwx  1 root   root       7572 Jun  6  2024 libabsl_spinlock_wait.a
+-rwxrwxrwx  1 root   root      10020 Jun  6  2024 libabsl_stacktrace.a
+-rwxrwxrwx  1 root   root     443152 Jun  6  2024 libabsl_status.a
+-rwxrwxrwx  1 root   root      66092 Jun  6  2024 libabsl_statusor.a
+-rwxrwxrwx  1 root   root      20416 Jun  6  2024 libabsl_strerror.a
+-rwxrwxrwx  1 root   root     832002 Jun  6  2024 libabsl_str_format_internal.a
+-rwxrwxrwx  1 root   root     634218 Jun  6  2024 libabsl_strings.a
+-rwxrwxrwx  1 root   root      19070 Jun  6  2024 libabsl_strings_internal.a
+-rwxrwxrwx  1 root   root      33836 Jun  6  2024 libabsl_string_view.a
+-rwxrwxrwx  1 root   root      59882 Jun  6  2024 libabsl_symbolize.a
+-rwxrwxrwx  1 root   root     321772 Jun  6  2024 libabsl_synchronization.a
+-rwxrwxrwx  1 root   root      17714 Jun  6  2024 libabsl_throw_delegate.a
+-rwxrwxrwx  1 root   root     464986 Jun  6  2024 libabsl_time.a
+-rwxrwxrwx  1 root   root    1124210 Jun  6  2024 libabsl_time_zone.a
+-rwxrwxrwx  1 root   root     197462 Jun  6  2024 libabsl_vlog_config_internal.a
+-rwxrwxrwx  1 root   root    2676116 Jan 19  2024 libantlr4-runtime.a
+-rwxrwxrwx  1 root   root    1412808 Jan 19  2024 libantlr4-runtime.so.4.9.3
+-rw-r--r--  1 root   root   33435616 Feb 20 09:57 libarrow.a
+-rw-r--r--  1 root   root    3624952 Feb 20 09:57 libarrow_bundled_dependencies.a
+lrwxrwxrwx  1 root   root         29 Feb 20 02:47 libarrow_gmock_main.so -> libarrow_gmock_main.so.1.11.0
+-rw-r--r--  1 root   root      16512 Feb 20 09:57 libarrow_gmock_main.so.1.11.0
+lrwxrwxrwx  1 root   root         24 Feb 20 02:47 libarrow_gmock.so -> libarrow_gmock.so.1.11.0
+-rw-r--r--  1 root   root     183336 Feb 20 09:57 libarrow_gmock.so.1.11.0
+lrwxrwxrwx  1 root   root         29 Feb 20 02:47 libarrow_gtest_main.so -> libarrow_gtest_main.so.1.11.0
+-rw-r--r--  1 root   root      16424 Feb 20 09:57 libarrow_gtest_main.so.1.11.0
+lrwxrwxrwx  1 root   root         24 Feb 20 02:47 libarrow_gtest.so -> libarrow_gtest.so.1.11.0
+-rw-r--r--  1 root   root    2365672 Feb 20 09:57 libarrow_gtest.so.1.11.0
+-rw-r--r--  1 root   root    3252438 Feb 20 09:57 libarrow_testing.a
+-rwxrwxrwx  1 root   root     458086 Jun  6  2024 libasync.a
+-rwxrwxrwx  1 root   root     417414 Jun  6  2024 libaws-c-auth.a
+-rwxrwxrwx  1 root   root     103844 Jun  6  2024 libaws-c-cal.a
+-rwxrwxrwx  1 root   root     470480 Jun  6  2024 libaws-c-common.a
+-rwxrwxrwx  1 root   root      12512 Jun  6  2024 libaws-c-compression.a
+-rwxrwxrwx  1 root   root     148678 Jun  6  2024 libaws-c-event-stream.a
+-rwxrwxrwx  1 root   root      44334 Jun  6  2024 libaws-checksums.a
+-rwxrwxrwx  1 root   root     665262 Jun  6  2024 libaws-c-http.a
+-rwxrwxrwx  1 root   root     474726 Jun  6  2024 libaws-c-io.a
+-rwxrwxrwx  1 root   root     529646 Jun  6  2024 libaws-c-mqtt.a
+-rwxrwxrwx  1 root   root     793966 Jun  6  2024 libaws-cpp-sdk-cognito-identity.a
+-rwxrwxrwx  1 root   root    3403652 Jun  6  2024 libaws-cpp-sdk-core.a
+-rwxrwxrwx  1 root   root     325084 Jun  6  2024 libaws-cpp-sdk-identity-management.a
+-rwxrwxrwx  1 root   root    3893330 Jun  6  2024 libaws-cpp-sdk-s3.a
+-rwxrwxrwx  1 root   root     455762 Jun  6  2024 libaws-cpp-sdk-sts.a
+-rwxrwxrwx  1 root   root    1340536 Jun  6  2024 libaws-crt-cpp.a
+-rwxrwxrwx  1 root   root     285848 Jun  6  2024 libaws-c-s3.a
+-rwxrwxrwx  1 root   root     160650 Jun  6  2024 libaws-c-sdkutils.a
+-rwxrwxrwx  1 root   root    1121170 Dec 19  2023 libazure-core.a
+-rwxrwxrwx  1 root   root    3605426 Dec 19  2023 libazure-storage-blobs.a
+-rwxrwxrwx  1 root   root     471834 Dec 19  2023 libazure-storage-common.a
+-rwxrwxrwx  1 root   root      13856 Jun  5  2024 libboost_atomic.a
+lrwxrwxrwx  1 root   root         25 Jun  5  2024 libboost_atomic.so -> libboost_atomic.so.1.84.0
+-rwxrwxrwx  1 root   root      18488 Jun  5  2024 libboost_atomic.so.1.84.0
+-rwxrwxrwx  1 root   root     155540 Jun  5  2024 libboost_chrono.a
+lrwxrwxrwx  1 root   root         25 Jun  5  2024 libboost_chrono.so -> libboost_chrono.so.1.84.0
+-rwxrwxrwx  1 root   root      45608 Jun  5  2024 libboost_chrono.so.1.84.0
+-rwxrwxrwx  1 root   root     165068 Jun  5  2024 libboost_container.a
+lrwxrwxrwx  1 root   root         28 Jun  5  2024 libboost_container.so -> libboost_container.so.1.84.0
+-rwxrwxrwx  1 root   root     111992 Jun  5  2024 libboost_container.so.1.84.0
+-rwxrwxrwx  1 root   root       7178 Jun  5  2024 libboost_context.a
+lrwxrwxrwx  1 root   root         26 Jun  5  2024 libboost_context.so -> libboost_context.so.1.84.0
+-rwxrwxrwx  1 root   root      17048 Jun  5  2024 libboost_context.so.1.84.0
+-rwxrwxrwx  1 root   root     267522 Jun  5  2024 libboost_contract.a
+lrwxrwxrwx  1 root   root         27 Jun  5  2024 libboost_contract.so -> libboost_contract.so.1.84.0
+-rwxrwxrwx  1 root   root     143408 Jun  5  2024 libboost_contract.so.1.84.0
+-rwxrwxrwx  1 root   root      32218 Jun  5  2024 libboost_coroutine.a
+lrwxrwxrwx  1 root   root         28 Jun  5  2024 libboost_coroutine.so -> libboost_coroutine.so.1.84.0
+-rwxrwxrwx  1 root   root      25808 Jun  5  2024 libboost_coroutine.so.1.84.0
+-rwxrwxrwx  1 root   root       1442 Jun  5  2024 libboost_date_time.a
+lrwxrwxrwx  1 root   root         28 Jun  5  2024 libboost_date_time.so -> libboost_date_time.so.1.84.0
+-rwxrwxrwx  1 root   root      15760 Jun  5  2024 libboost_date_time.so.1.84.0
+-rwxrwxrwx  1 root   root       1638 Jun  5  2024 libboost_exception.a
+-rwxrwxrwx  1 root   root     255434 Jun  5  2024 libboost_fiber.a
+lrwxrwxrwx  1 root   root         24 Jun  5  2024 libboost_fiber.so -> libboost_fiber.so.1.84.0
+-rwxrwxrwx  1 root   root     114352 Jun  5  2024 libboost_fiber.so.1.84.0
+-rwxrwxrwx  1 root   root     408992 Jun  5  2024 libboost_filesystem.a
+lrwxrwxrwx  1 root   root         29 Jun  5  2024 libboost_filesystem.so -> libboost_filesystem.so.1.84.0
+-rwxrwxrwx  1 root   root     189384 Jun  5  2024 libboost_filesystem.so.1.84.0
+-rwxrwxrwx  1 root   root     990280 Jun  5  2024 libboost_graph.a
+lrwxrwxrwx  1 root   root         24 Jun  5  2024 libboost_graph.so -> libboost_graph.so.1.84.0
+-rwxrwxrwx  1 root   root     495696 Jun  5  2024 libboost_graph.so.1.84.0
+-rwxrwxrwx  1 root   root     281172 Jun  5  2024 libboost_iostreams.a
+lrwxrwxrwx  1 root   root         28 Jun  5  2024 libboost_iostreams.so -> libboost_iostreams.so.1.84.0
+-rwxrwxrwx  1 root   root    1061088 Jun  5  2024 libboost_iostreams.so.1.84.0
+-rwxrwxrwx  1 root   root     751706 Jun  5  2024 libboost_json.a
+lrwxrwxrwx  1 root   root         23 Jun  5  2024 libboost_json.so -> libboost_json.so.1.84.0
+-rwxrwxrwx  1 root   root     452680 Jun  5  2024 libboost_json.so.1.84.0
+-rwxrwxrwx  1 root   root    2708268 Jun  5  2024 libboost_locale.a
+lrwxrwxrwx  1 root   root         25 Jun  5  2024 libboost_locale.so -> libboost_locale.so.1.84.0
+-rwxrwxrwx  1 root   root    1075648 Jun  5  2024 libboost_locale.so.1.84.0
+-rwxrwxrwx  1 root   root    3281400 Jun  5  2024 libboost_log.a
+-rwxrwxrwx  1 root   root    2921772 Jun  5  2024 libboost_log_setup.a
+lrwxrwxrwx  1 root   root         28 Jun  5  2024 libboost_log_setup.so -> libboost_log_setup.so.1.84.0
+-rwxrwxrwx  1 root   root    1425040 Jun  5  2024 libboost_log_setup.so.1.84.0
+lrwxrwxrwx  1 root   root         22 Jun  5  2024 libboost_log.so -> libboost_log.so.1.84.0
+-rwxrwxrwx  1 root   root    1220208 Jun  5  2024 libboost_log.so.1.84.0
+-rwxrwxrwx  1 root   root     171870 Jun  5  2024 libboost_math_c99.a
+-rwxrwxrwx  1 root   root     152636 Jun  5  2024 libboost_math_c99f.a
+lrwxrwxrwx  1 root   root         28 Jun  5  2024 libboost_math_c99f.so -> libboost_math_c99f.so.1.84.0
+-rwxrwxrwx  1 root   root      62912 Jun  5  2024 libboost_math_c99f.so.1.84.0
+-rwxrwxrwx  1 root   root     150944 Jun  5  2024 libboost_math_c99l.a
+lrwxrwxrwx  1 root   root         28 Jun  5  2024 libboost_math_c99l.so -> libboost_math_c99l.so.1.84.0
+-rwxrwxrwx  1 root   root      61824 Jun  5  2024 libboost_math_c99l.so.1.84.0
+lrwxrwxrwx  1 root   root         27 Jun  5  2024 libboost_math_c99.so -> libboost_math_c99.so.1.84.0
+-rwxrwxrwx  1 root   root      72256 Jun  5  2024 libboost_math_c99.so.1.84.0
+-rwxrwxrwx  1 root   root    1078448 Jun  5  2024 libboost_math_tr1.a
+-rwxrwxrwx  1 root   root    1043000 Jun  5  2024 libboost_math_tr1f.a
+lrwxrwxrwx  1 root   root         28 Jun  5  2024 libboost_math_tr1f.so -> libboost_math_tr1f.so.1.84.0
+-rwxrwxrwx  1 root   root     416128 Jun  5  2024 libboost_math_tr1f.so.1.84.0
+-rwxrwxrwx  1 root   root    1045780 Jun  5  2024 libboost_math_tr1l.a
+lrwxrwxrwx  1 root   root         28 Jun  5  2024 libboost_math_tr1l.so -> libboost_math_tr1l.so.1.84.0
+-rwxrwxrwx  1 root   root     418768 Jun  5  2024 libboost_math_tr1l.so.1.84.0
+lrwxrwxrwx  1 root   root         27 Jun  5  2024 libboost_math_tr1.so -> libboost_math_tr1.so.1.84.0
+-rwxrwxrwx  1 root   root     427720 Jun  5  2024 libboost_math_tr1.so.1.84.0
+-rwxrwxrwx  1 root   root      22602 Jun  5  2024 libboost_nowide.a
+lrwxrwxrwx  1 root   root         25 Jun  5  2024 libboost_nowide.so -> libboost_nowide.so.1.84.0
+-rwxrwxrwx  1 root   root      24752 Jun  5  2024 libboost_nowide.so.1.84.0
+-rwxrwxrwx  1 root   root     169448 Jun  5  2024 libboost_prg_exec_monitor.a
+lrwxrwxrwx  1 root   root         35 Jun  5  2024 libboost_prg_exec_monitor.so -> libboost_prg_exec_monitor.so.1.84.0
+-rwxrwxrwx  1 root   root     103440 Jun  5  2024 libboost_prg_exec_monitor.so.1.84.0
+-rwxrwxrwx  1 root   root    1162008 Jun  5  2024 libboost_program_options.a
+lrwxrwxrwx  1 root   root         34 Jun  5  2024 libboost_program_options.so -> libboost_program_options.so.1.84.0
+-rwxrwxrwx  1 root   root     532568 Jun  5  2024 libboost_program_options.so.1.84.0
+-rwxrwxrwx  1 root   root     644574 Jun  5  2024 libboost_python39.a
+lrwxrwxrwx  1 root   root         27 Jun  5  2024 libboost_python39.so -> libboost_python39.so.1.84.0
+-rwxrwxrwx  1 root   root     340776 Jun  5  2024 libboost_python39.so.1.84.0
+-rwxrwxrwx  1 root   root      53776 Jun  5  2024 libboost_random.a
+lrwxrwxrwx  1 root   root         25 Jun  5  2024 libboost_random.so -> libboost_random.so.1.84.0
+-rwxrwxrwx  1 root   root      44936 Jun  5  2024 libboost_random.so.1.84.0
+-rwxrwxrwx  1 root   root     754538 Jun  5  2024 libboost_regex.a
+lrwxrwxrwx  1 root   root         24 Jun  5  2024 libboost_regex.so -> libboost_regex.so.1.84.0
+-rwxrwxrwx  1 root   root     393960 Jun  5  2024 libboost_regex.so.1.84.0
+-rwxrwxrwx  1 root   root    1237192 Jun  5  2024 libboost_serialization.a
+lrwxrwxrwx  1 root   root         32 Jun  5  2024 libboost_serialization.so -> libboost_serialization.so.1.84.0
+-rwxrwxrwx  1 root   root     487536 Jun  5  2024 libboost_serialization.so.1.84.0
+-rwxrwxrwx  1 root   root      45778 Jun  5  2024 libboost_stacktrace_addr2line.a
+lrwxrwxrwx  1 root   root         39 Jun  5  2024 libboost_stacktrace_addr2line.so -> libboost_stacktrace_addr2line.so.1.84.0
+-rwxrwxrwx  1 root   root      52760 Jun  5  2024 libboost_stacktrace_addr2line.so.1.84.0
+-rwxrwxrwx  1 root   root      13576 Jun  5  2024 libboost_stacktrace_basic.a
+lrwxrwxrwx  1 root   root         35 Jun  5  2024 libboost_stacktrace_basic.so -> libboost_stacktrace_basic.so.1.84.0
+-rwxrwxrwx  1 root   root      22816 Jun  5  2024 libboost_stacktrace_basic.so.1.84.0
+-rwxrwxrwx  1 root   root       2806 Jun  5  2024 libboost_stacktrace_noop.a
+lrwxrwxrwx  1 root   root         34 Jun  5  2024 libboost_stacktrace_noop.so -> libboost_stacktrace_noop.so.1.84.0
+-rwxrwxrwx  1 root   root      16272 Jun  5  2024 libboost_stacktrace_noop.so.1.84.0
+-rwxrwxrwx  1 root   root       1412 Jun  5  2024 libboost_system.a
+lrwxrwxrwx  1 root   root         25 Jun  5  2024 libboost_system.so -> libboost_system.so.1.84.0
+-rwxrwxrwx  1 root   root      15752 Jun  5  2024 libboost_system.so.1.84.0
+-rwxrwxrwx  1 root   root    2307412 Jun  5  2024 libboost_test_exec_monitor.a
+-rwxrwxrwx  1 root   root     297434 Jun  5  2024 libboost_thread.a
+lrwxrwxrwx  1 root   root         25 Jun  5  2024 libboost_thread.so -> libboost_thread.so.1.84.0
+-rwxrwxrwx  1 root   root     160968 Jun  5  2024 libboost_thread.so.1.84.0
+-rwxrwxrwx  1 root   root      21846 Jun  5  2024 libboost_timer.a
+lrwxrwxrwx  1 root   root         24 Jun  5  2024 libboost_timer.so -> libboost_timer.so.1.84.0
+-rwxrwxrwx  1 root   root      29224 Jun  5  2024 libboost_timer.so.1.84.0
+-rwxrwxrwx  1 root   root     113132 Jun  5  2024 libboost_type_erasure.a
+lrwxrwxrwx  1 root   root         31 Jun  5  2024 libboost_type_erasure.so -> libboost_type_erasure.so.1.84.0
+-rwxrwxrwx  1 root   root      76112 Jun  5  2024 libboost_type_erasure.so.1.84.0
+-rwxrwxrwx  1 root   root    2289590 Jun  5  2024 libboost_unit_test_framework.a
+lrwxrwxrwx  1 root   root         38 Jun  5  2024 libboost_unit_test_framework.so -> libboost_unit_test_framework.so.1.84.0
+-rwxrwxrwx  1 root   root     976088 Jun  5  2024 libboost_unit_test_framework.so.1.84.0
+-rwxrwxrwx  1 root   root    2397640 Jun  5  2024 libboost_url.a
+lrwxrwxrwx  1 root   root         22 Jun  5  2024 libboost_url.so -> libboost_url.so.1.84.0
+-rwxrwxrwx  1 root   root     476880 Jun  5  2024 libboost_url.so.1.84.0
+-rwxrwxrwx  1 root   root    4656748 Jun  5  2024 libboost_wave.a
+lrwxrwxrwx  1 root   root         23 Jun  5  2024 libboost_wave.so -> libboost_wave.so.1.84.0
+-rwxrwxrwx  1 root   root    1597760 Jun  5  2024 libboost_wave.so.1.84.0
+-rwxrwxrwx  1 root   root     812420 Jun  5  2024 libboost_wserialization.a
+lrwxrwxrwx  1 root   root         33 Jun  5  2024 libboost_wserialization.so -> libboost_wserialization.so.1.84.0
+-rwxrwxrwx  1 root   root     338848 Jun  5  2024 libboost_wserialization.so.1.84.0
+-rwxrwxrwx  1 root   root     671474 Jun  6  2024 libcompiler.a
+-rwxrwxrwx  1 root   root     721230 Jun  6  2024 libcompiler_ast.a
+-rwxrwxrwx  1 root   root    2114930 Jun  6  2024 libcompiler_base.a
+-rwxrwxrwx  1 root   root     744390 Jun  6  2024 libconcurrency.a
+-rwxrwxrwx  1 root   root      32674 Dec 19  2023 libcrc32c.a
+-rwxrwxrwx  1 root   root    5330472 Jun  6  2024 libfizz.a
+-rwxrwxrwx  1 root   root      87784 Jun  6  2024 libfizz_test_support.a
+-rwxrwxrwx  1 root   root     265704 Feb 20 09:52 libfmt.a
+-rwxrwxrwx  1 root   root  324854064 Feb 20 09:55 libfolly.a
+-rwxrwxrwx  1 root   root    7096340 Feb 20 09:55 libfollybenchmark.a
+-rwxrwxrwx  1 root   root    1775862 Feb 20 09:55 libfolly_exception_counter.a
+-rwxrwxrwx  1 root   root     933404 Feb 20 09:55 libfolly_exception_tracer.a
+-rwxrwxrwx  1 root   root     757060 Feb 20 09:55 libfolly_exception_tracer_base.a
+-rwxrwxrwx  1 root   root    4596668 Feb 20 09:55 libfolly_test_util.a
+lrwxrwxrwx  1 arnavb user         12 Feb 28  2024 libglog.so -> libglog.so.1
+-rwxrwxrwx  1 arnavb user     221480 Feb 28  2024 libglog.so.0.6.0
+lrwxrwxrwx  1 arnavb user         16 Feb 28  2024 libglog.so.1 -> libglog.so.0.6.0
+-rwxrwxrwx  1 root   root   11289630 Jun  6  2024 libgoogle_cloud_cpp_common.a
+-rwxrwxrwx  1 root   root   33103362 Jun  6  2024 libgoogle_cloud_cpp_rest_internal.a
+-rwxrwxrwx  1 root   root   84724522 Jun  6  2024 libgoogle_cloud_cpp_storage.a
+-rwxrwxrwx  1 root   root  135102264 Dec 19  2023 libhdfs3.a
+lrwxrwxrwx  1 root   root         13 Jan 18  2024 libhdfs3.so -> libhdfs3.so.1
+lrwxrwxrwx  1 root   root         18 Jan 18  2024 libhdfs3.so.1 -> libhdfs3.so.2.2.31
+-rwxrwxrwx  1 root   root   48189840 Dec 19  2023 libhdfs3.so.2.2.31
+-rwxrwxrwx  1 root   root     399402 Jun  6  2024 liblibhttperf2.a
+-rwxrwxrwx  1 root   root     406170 Jun  6  2024 libmustache.a
+-rwxrwxrwx  1 root   root     106792 Jun  6  2024 libmvfst_async_udp_socket.a
+-rwxrwxrwx  1 root   root     138196 Jun  6  2024 libmvfst_batch_writer.a
+-rwxrwxrwx  1 root   root      23762 Jun  6  2024 libmvfst_buf_accessor.a
+-rwxrwxrwx  1 root   root      25142 Jun  6  2024 libmvfst_bufutil.a
+-rwxrwxrwx  1 root   root     640650 Jun  6  2024 libmvfst_cc_algo.a
+-rwxrwxrwx  1 root   root     985816 Jun  6  2024 libmvfst_client.a
+-rwxrwxrwx  1 root   root     318400 Jun  6  2024 libmvfst_codec.a
+-rwxrwxrwx  1 root   root     231496 Jun  6  2024 libmvfst_codec_decode.a
+-rwxrwxrwx  1 root   root      20368 Jun  6  2024 libmvfst_codec_packet_number_cipher.a
+-rwxrwxrwx  1 root   root     171134 Jun  6  2024 libmvfst_codec_pktbuilder.a
+-rwxrwxrwx  1 root   root      55080 Jun  6  2024 libmvfst_codec_pktrebuilder.a
+-rwxrwxrwx  1 root   root     200186 Jun  6  2024 libmvfst_codec_types.a
+-rwxrwxrwx  1 root   root      19918 Jun  6  2024 libmvfst_constants.a
+-rwxrwxrwx  1 root   root     156668 Jun  6  2024 libmvfst_dsr_frontend.a
+-rwxrwxrwx  1 root   root      11084 Jun  6  2024 libmvfst_dsr_types.a
+-rwxrwxrwx  1 root   root      48234 Jun  6  2024 libmvfst_events.a
+-rwxrwxrwx  1 root   root      53074 Jun  6  2024 libmvfst_exception.a
+-rwxrwxrwx  1 root   root     342072 Jun  6  2024 libmvfst_fizz_client.a
+-rwxrwxrwx  1 root   root     145100 Jun  6  2024 libmvfst_fizz_handshake.a
+-rwxrwxrwx  1 root   root      68582 Jun  6  2024 libmvfst_flowcontrol.a
+-rwxrwxrwx  1 root   root      64460 Jun  6  2024 libmvfst_handshake.a
+-rwxrwxrwx  1 root   root      35090 Jun  6  2024 libmvfst_happyeyeballs.a
+-rwxrwxrwx  1 root   root      66010 Jun  6  2024 libmvfst_looper.a
+-rwxrwxrwx  1 root   root     229364 Jun  6  2024 libmvfst_loss.a
+-rwxrwxrwx  1 root   root      45422 Jun  6  2024 libmvfst_observer.a
+-rwxrwxrwx  1 root   root     557952 Jun  6  2024 libmvfst_qlogger.a
+-rwxrwxrwx  1 root   root    1637382 Jun  6  2024 libmvfst_server.a
+-rwxrwxrwx  1 root   root     206344 Jun  6  2024 libmvfst_server_async_tran.a
+-rwxrwxrwx  1 root   root     631538 Jun  6  2024 libmvfst_server_state.a
+-rwxrwxrwx  1 root   root     356328 Jun  6  2024 libmvfst_state_ack_handler.a
+-rwxrwxrwx  1 root   root      15496 Jun  6  2024 libmvfst_state_datagram_handler.a
+-rwxrwxrwx  1 root   root      66926 Jun  6  2024 libmvfst_state_functions.a
+-rwxrwxrwx  1 root   root     313788 Jun  6  2024 libmvfst_state_machine.a
+-rwxrwxrwx  1 root   root      11350 Jun  6  2024 libmvfst_state_pacing_functions.a
+-rwxrwxrwx  1 root   root      79578 Jun  6  2024 libmvfst_state_simple_frame_functions.a
+-rwxrwxrwx  1 root   root     138164 Jun  6  2024 libmvfst_state_stream.a
+-rwxrwxrwx  1 root   root      78940 Jun  6  2024 libmvfst_state_stream_functions.a
+-rwxrwxrwx  1 root   root    1334998 Jun  6  2024 libmvfst_transport.a
+-rwxrwxrwx  1 root   root     103274 Jun  6  2024 libmvfst_transport_knobs.a
+-rwxrwxrwx  1 root   root      64382 Jun  6  2024 libmvfst_transport_settings_functions.a
+-rwxrwxrwx  1 root   root     184086 Jun  6  2024 libmvfst_xsk.a
+-rw-r--r--  1 root   root   10420182 Feb 20 09:57 libparquet.a
+-rwxrwxrwx  1 arnavb user     373610 Feb 28  2024 libprometheus-cpp-core.a
+-rwxrwxrwx  1 arnavb user     360038 Feb 28  2024 libprometheus-cpp-pull.a
+-rwxrwxrwx  1 arnavb user     185484 Feb 28  2024 libprometheus-cpp-push.a
+-rwxrwxrwx  1 root   root  133472358 Dec 19  2023 libprotobuf.a
+-rwxrwxrwx  1 root   root        988 Dec 19  2023 libprotobuf.la
+-rwxrwxrwx  1 root   root   20205998 Dec 19  2023 libprotobuf-lite.a
+-rwxrwxrwx  1 root   root       1023 Dec 19  2023 libprotobuf-lite.la
+lrwxrwxrwx  1 root   root         27 Dec 19  2023 libprotobuf-lite.so -> libprotobuf-lite.so.32.0.12
+lrwxrwxrwx  1 root   root         27 Dec 19  2023 libprotobuf-lite.so.32 -> libprotobuf-lite.so.32.0.12
+-rwxrwxrwx  1 root   root     600032 Dec 19  2023 libprotobuf-lite.so.32.0.12
+lrwxrwxrwx  1 root   root         22 Dec 19  2023 libprotobuf.so -> libprotobuf.so.32.0.12
+lrwxrwxrwx  1 root   root         22 Dec 19  2023 libprotobuf.so.32 -> libprotobuf.so.32.0.12
+-rwxrwxrwx  1 root   root    2754744 Dec 19  2023 libprotobuf.so.32.0.12
+-rwxrwxrwx  1 root   root  253868190 Dec 19  2023 libprotoc.a
+-rwxrwxrwx  1 root   root       1004 Dec 19  2023 libprotoc.la
+lrwxrwxrwx  1 root   root         20 Dec 19  2023 libprotoc.so -> libprotoc.so.32.0.12
+lrwxrwxrwx  1 root   root         20 Dec 19  2023 libprotoc.so.32 -> libprotoc.so.32.0.12
+-rwxrwxrwx  1 root   root    3005048 Dec 19  2023 libprotoc.so.32.0.12
+-rwxrwxrwx  1 root   root   10815908 Jun  6  2024 libproxygen.a
+-rwxrwxrwx  1 root   root     132876 Jun  6  2024 libproxygencurl.a
+-rwxrwxrwx  1 root   root      79172 Jun  6  2024 libproxygendeviousbaton.a
+-rwxrwxrwx  1 root   root      33744 Jun  6  2024 libproxygenhqloggerhelper.a
+-rwxrwxrwx  1 root   root    1248396 Jun  6  2024 libproxygenhttpserver.a
+-rwxrwxrwx  1 root   root    1598684 Jun  6  2024 librpcmetadata.a
+-rwxrwxrwx  1 root   root    2642082 Jun  6  2024 libs2n.a
+-rwxrwxrwx  1 root   root     332032 Jun  6  2024 libserverdbginfo.a
+-rw-r--r--  1 root   root    2188402 Feb 20 09:57 libthrift.a
+-rwxrwxrwx  1 root   root    1650376 Jun  6  2024 libthriftannotation.a
+-rwxrwxrwx  1 root   root     126666 Jun  6  2024 libthriftanyrep.a
+-rwxrwxrwx  1 root   root      33090 Jun  6  2024 libthrift-core.a
+-rwxrwxrwx  1 root   root   20942752 Jun  6  2024 libthriftcpp2.a
+-rwxrwxrwx  1 root   root     323060 Jun  6  2024 libthriftfrozen2.a
+-rwxrwxrwx  1 root   root    1189090 Jun  6  2024 libthriftmetadata.a
+-rwxrwxrwx  1 root   root    1476894 Jun  6  2024 libthriftprotocol.a
+-rwxrwxrwx  1 root   root     390292 Jun  6  2024 libthrifttype.a
+-rwxrwxrwx  1 root   root     329360 Jun  6  2024 libthrifttyperep.a
+-rwxrwxrwx  1 root   root    1457636 Jun  6  2024 libtransport.a
+-rwxrwxrwx  1 root   root    1119422 May 31  2024 libunwind.a
+-rwxrwxrwx  1 root   root     422954 May 31  2024 libunwind-coredump.a
+-rwxrwxrwx  1 root   root       1263 May 31  2024 libunwind-coredump.la
+lrwxrwxrwx  1 root   root         27 May 31  2024 libunwind-coredump.so -> libunwind-coredump.so.0.0.0
+lrwxrwxrwx  1 root   root         27 May 31  2024 libunwind-coredump.so.0 -> libunwind-coredump.so.0.0.0
+-rwxrwxrwx  1 root   root     191584 May 31  2024 libunwind-coredump.so.0.0.0
+lrwxrwxrwx  1 root   root         18 May 31  2024 libunwind-generic.a -> libunwind-x86_64.a
+lrwxrwxrwx  1 root   root         19 May 31  2024 libunwind-generic.so -> libunwind-x86_64.so
+-rwxrwxrwx  1 root   root       1025 May 31  2024 libunwind.la
+-rwxrwxrwx  1 root   root     281858 May 31  2024 libunwind-ptrace.a
+-rwxrwxrwx  1 root   root       1249 May 31  2024 libunwind-ptrace.la
+lrwxrwxrwx  1 root   root         25 May 31  2024 libunwind-ptrace.so -> libunwind-ptrace.so.0.0.0
+lrwxrwxrwx  1 root   root         25 May 31  2024 libunwind-ptrace.so.0 -> libunwind-ptrace.so.0.0.0
+-rwxrwxrwx  1 root   root     133888 May 31  2024 libunwind-ptrace.so.0.0.0
+-rwxrwxrwx  1 root   root     106326 May 31  2024 libunwind-setjmp.a
+-rwxrwxrwx  1 root   root       1249 May 31  2024 libunwind-setjmp.la
+lrwxrwxrwx  1 root   root         25 May 31  2024 libunwind-setjmp.so -> libunwind-setjmp.so.0.0.0
+lrwxrwxrwx  1 root   root         25 May 31  2024 libunwind-setjmp.so.0 -> libunwind-setjmp.so.0.0.0
+-rwxrwxrwx  1 root   root      66224 May 31  2024 libunwind-setjmp.so.0.0.0
+lrwxrwxrwx  1 root   root         18 May 31  2024 libunwind.so -> libunwind.so.8.1.0
+lrwxrwxrwx  1 root   root         18 May 31  2024 libunwind.so.8 -> libunwind.so.8.1.0
+-rwxrwxrwx  1 root   root     488976 May 31  2024 libunwind.so.8.1.0
+-rwxrwxrwx  1 root   root    1277496 May 31  2024 libunwind-x86_64.a
+-rwxrwxrwx  1 root   root       1158 May 31  2024 libunwind-x86_64.la
+lrwxrwxrwx  1 root   root         25 May 31  2024 libunwind-x86_64.so -> libunwind-x86_64.so.8.1.0
+lrwxrwxrwx  1 root   root         25 May 31  2024 libunwind-x86_64.so.8 -> libunwind-x86_64.so.8.1.0
+-rwxrwxrwx  1 root   root     574240 May 31  2024 libunwind-x86_64.so.8.1.0
+-rwxrwxrwx  1 root   root    2788174 Jun  6  2024 libwangle.a
+-rwxrwxrwx  1 root   root    1257398 Dec 19  2023 libzstd.a
+lrwxrwxrwx  1 root   root         16 Feb 19 18:50 libzstd.so.1 -> libzstd.so.1.5.5
+-rwxrwxrwx  1 root   root    1139544 Dec 19  2023 libzstd.so.1.5.5
+drwxrwxrwx  2 root   root      20480 Feb 20 09:57 pkgconfig
+drwxrwsrwx  4 root   staff      4096 Feb 19 18:50 python2.7
+drwxrwxrwx  1 arnavb user       4096 Jan  1  1970 python3.6
+drwxrwxrwx  1 root   root       4096 Jan  1  2000 python3.9
+drwxrwxrwx  3 root   root       4096 Feb 19 18:48 s2n
+drwxrwxrwx  1 arnavb user       4096 Jan  1  1970 systemd

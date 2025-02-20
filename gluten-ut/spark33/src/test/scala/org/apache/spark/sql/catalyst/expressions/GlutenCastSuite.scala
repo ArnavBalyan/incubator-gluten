@@ -17,13 +17,13 @@
 package org.apache.spark.sql.catalyst.expressions
 
 import org.apache.spark.sql.GlutenTestsTrait
-import org.apache.spark.sql.catalyst.util.DateTimeTestUtils.{withDefaultTimeZone, ALL_TIMEZONES, UTC, UTC_OPT}
-import org.apache.spark.sql.catalyst.util.DateTimeUtils.{fromJavaTimestamp, millisToMicros, TimeZoneUTC}
+import org.apache.spark.sql.catalyst.util.DateTimeTestUtils.{ALL_TIMEZONES, UTC, UTC_OPT, withDefaultTimeZone}
+import org.apache.spark.sql.catalyst.util.DateTimeUtils.{TimeZoneUTC, fromJavaTimestamp, millisToMicros}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
 import java.sql.{Date, Timestamp}
-import java.util.Calendar
+import java.util.{Calendar, TimeZone}
 
 class GlutenCastSuite extends CastSuite with GlutenTestsTrait {
   override def cast(v: Any, targetType: DataType, timeZoneId: Option[String] = None): CastBase = {
@@ -152,4 +152,33 @@ class GlutenCastSuite extends CastSuite with GlutenTestsTrait {
 
     checkEvaluation(cast(Literal.create(null, IntegerType), ShortType), null)
   }
+
+  test("cast Velox Timestamp to Double with fractional seconds") {
+    val originalDefaultTz = TimeZone.getDefault
+    try {
+      TimeZone.setDefault(TimeZone.getTimeZone("UTC"))
+
+      val testCases = Seq(
+        ("1969-12-31 23:59:59.999", -0.001),
+        ("1970-01-01 00:00:00.000", 0.0),
+        ("1970-01-01 00:00:00.999", 0.999),
+        ("1970-01-01 00:00:01.000", 1.0),
+        ("1970-01-01 00:00:59.999", 59.999),
+        ("1970-01-01 00:01:00.000", 60.0),
+        ("2000-01-01 00:00:00.000", 946684800.0),
+        ("2024-02-16 12:34:56.789", 1708086896.789),
+        ("9999-12-31 23:59:59.999", 253402300799.999),
+        ("1969-12-31 23:59:59.999", -0.001),
+        ("1900-01-01 12:00:00.000", -2208945600.0)
+      )
+
+      for ((tsString, expected) <- testCases) {
+        val ts = Timestamp.valueOf(tsString)
+        checkEvaluation(cast(ts, DoubleType), expected)
+      }
+    } finally {
+      TimeZone.setDefault(originalDefaultTz)
+    }
+  }
+
 }
