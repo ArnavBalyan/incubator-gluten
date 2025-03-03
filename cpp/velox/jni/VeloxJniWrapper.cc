@@ -50,6 +50,8 @@ jmethodID blockStripesConstructor;
 extern "C" {
 #endif
 
+JavaVM* gJvm = nullptr;
+
 jint JNI_OnLoad(JavaVM* vm, void*) {
   JNIEnv* env;
   if (vm->GetEnv(reinterpret_cast<void**>(&env), jniVersion) != JNI_OK) {
@@ -66,7 +68,7 @@ jint JNI_OnLoad(JavaVM* vm, void*) {
   blockStripesConstructor = env->GetMethodID(blockStripesClass, "<init>", "(J[J[II[B)V");
 
   DLOG(INFO) << "Loaded Velox backend.";
-
+  gJvm = vm;
   return jniVersion;
 }
 
