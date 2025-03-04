@@ -50,6 +50,8 @@ jmethodID blockStripesConstructor;
 extern "C" {
 #endif
 
+JavaVM* gJvm = nullptr;
+
 jint JNI_OnLoad(JavaVM* vm, void*) {
   JNIEnv* env;
   if (vm->GetEnv(reinterpret_cast<void**>(&env), jniVersion) != JNI_OK) {
@@ -66,7 +68,7 @@ jint JNI_OnLoad(JavaVM* vm, void*) {
   blockStripesConstructor = env->GetMethodID(blockStripesClass, "<init>", "(J[J[II[B)V");
 
   DLOG(INFO) << "Loaded Velox backend.";
-
+  gJvm = vm;
   return jniVersion;
 }
 
@@ -81,6 +83,7 @@ void JNI_OnUnload(JavaVM* vm, void*) {
   getJniErrorState()->close();
   getJniCommonState()->close();
   google::ShutdownGoogleLogging();
+  gJvm = nullptr;
 }
 
 JNIEXPORT void JNICALL Java_org_apache_gluten_init_NativeBackendInitializer_initialize( // NOLINT
