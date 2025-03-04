@@ -83,6 +83,7 @@ void JNI_OnUnload(JavaVM* vm, void*) {
   getJniErrorState()->close();
   getJniCommonState()->close();
   google::ShutdownGoogleLogging();
+  gJvm = nullptr;
 }
 
 JNIEXPORT void JNICALL Java_org_apache_gluten_init_NativeBackendInitializer_initialize( // NOLINT
