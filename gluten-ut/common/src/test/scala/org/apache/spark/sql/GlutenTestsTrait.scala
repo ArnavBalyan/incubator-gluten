@@ -142,21 +142,6 @@ trait GlutenTestsTrait extends GlutenTestsCommonTrait {
     }
   }
 
-   protected def checkEvaluationWithFallback(
-                                          expression: => Expression,
-                                          expected: Any,
-                                          inputRow: InternalRow = EmptyRow): Unit = {
-    val resolver = ResolveTimeZone
-    val expr = resolver.resolveTimeZones(expression)
-    val catalystValue = CatalystTypeConverters.convertToCatalyst(expected)
-    checkEvaluationWithoutCodegen(expr, catalystValue, inputRow)
-    checkEvaluationWithMutableProjection(expr, catalystValue, inputRow)
-    if (GenerateUnsafeProjection.canSupport(expr.dataType)) {
-      checkEvaluationWithUnsafeProjection(expr, catalystValue, inputRow)
-    }
-    checkEvaluationWithOptimization(expr, catalystValue, inputRow)
-  }
-
   /**
    * Sort map data by key and return the sorted key array and value array.
    *
@@ -370,4 +355,20 @@ trait GlutenTestsTrait extends GlutenTestsCommonTrait {
       _spark.sparkContext.parallelize(Seq(inputRow)),
       StructType(structFileSeq.toSeq))
   }
+
+  protected def checkEvaluationWithFallback(
+                                             expression: => Expression,
+                                             expected: Any,
+                                             inputRow: InternalRow = EmptyRow): Unit = {
+    val resolver = ResolveTimeZone
+    val expr = resolver.resolveTimeZones(expression)
+    val catalystValue = CatalystTypeConverters.convertToCatalyst(expected)
+    checkEvaluationWithoutCodegen(expr, catalystValue, inputRow)
+    checkEvaluationWithMutableProjection(expr, catalystValue, inputRow)
+    if (GenerateUnsafeProjection.canSupport(expr.dataType)) {
+      checkEvaluationWithUnsafeProjection(expr, catalystValue, inputRow)
+    }
+    checkEvaluationWithOptimization(expr, catalystValue, inputRow)
+  }
+
 }
