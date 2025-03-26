@@ -47,6 +47,7 @@
 #include "velox/dwio/orc/reader/OrcReader.h"
 #include "velox/dwio/parquet/RegisterParquetReader.h"
 #include "velox/dwio/parquet/RegisterParquetWriter.h"
+#include "velox/dwio/parquet/crypto/CryptoFactory.h"
 #include "velox/serializers/PrestoSerializer.h"
 
 DECLARE_bool(velox_exception_user_stacktrace_enabled);
@@ -155,6 +156,10 @@ void VeloxBackend::init(const std::unordered_map<std::string, std::string>& conf
   velox::dwio::common::registerFileSinks();
   velox::parquet::registerParquetReaderFactory();
   velox::parquet::registerParquetWriterFactory();
+  std::string keytabPath = "";
+  std::string kmsUri = backendConf_->get<std::string>(kGlutenKMSUri, "kms://http@localhost:19717/kms");
+  velox::parquet::initializeCryptoFactory(
+      kmsUri, keytabPath, true, true);
   velox::orc::registerOrcReaderFactory();
   velox::exec::ExprToSubfieldFilterParser::registerParserFactory(
       []() { return std::make_shared<SparkExprToSubfieldFilterParser>(); });
