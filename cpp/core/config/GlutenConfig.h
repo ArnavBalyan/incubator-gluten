@@ -27,6 +27,10 @@ namespace gluten {
 // store configurations that are general to all backend types
 const std::string kDebugModeEnabled = "spark.gluten.sql.debug";
 
+const std::string kGlutenClacEnabled = "spark.gluten.sql.clac.enabled";
+
+const std::string kGlutenKMSUri = "spark.hadoop.crypto.retriever.kms.url";
+
 const std::string kGlutenSaveDir = "spark.gluten.saveDir";
 
 const std::string kCaseSensitive = "spark.sql.caseSensitive";

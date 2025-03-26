@@ -453,6 +453,8 @@ object GlutenConfig {
     val nativeConfMap = new util.HashMap[String, String]()
     val keys = Set(
       DEBUG_ENABLED.key,
+      GLUTEN_CLAC_ENABLED.key,
+      GLUTEN_CLAC_KMS_URL.key,
       BENCHMARK_SAVE_DIR.key,
       COLUMNAR_TASK_OFFHEAP_SIZE_IN_BYTES.key,
       COLUMNAR_MAX_BATCH_SIZE.key,
@@ -594,7 +596,8 @@ object GlutenConfig {
       // datasource config
       SPARK_SQL_PARQUET_COMPRESSION_CODEC,
       // datasource config end
-
+      GLUTEN_CLAC_ENABLED.key,
+      GLUTEN_CLAC_KMS_URL.key,
       COLUMNAR_OVERHEAD_SIZE_IN_BYTES.key,
       COLUMNAR_OFFHEAP_SIZE_IN_BYTES.key,
       COLUMNAR_TASK_OFFHEAP_SIZE_IN_BYTES.key,
@@ -637,6 +640,20 @@ object GlutenConfig {
         " Recommend to enable/disable Gluten through the setting for spark.plugins.")
       .booleanConf
       .createWithDefault(true)
+
+  val GLUTEN_CLAC_ENABLED =
+    buildConf("spark.gluten.sql.clac.enabled")
+      .internal()
+      .doc("Clac is enabled or disabled")
+      .stringConf
+      .createWithDefault("true")
+
+  val GLUTEN_CLAC_KMS_URL =
+    buildConf("spark.hadoop.crypto.retriever.kms.url")
+      .internal()
+      .doc("Crypto Retriever KMS URL")
+      .stringConf
+      .createWithDefault("kms://http@localhost:19717/kms")
 
   val GLUTEN_UI_ENABLED = buildStaticConf("spark.gluten.ui.enabled")
     .doc(
