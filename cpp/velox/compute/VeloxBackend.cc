@@ -157,7 +157,8 @@ void VeloxBackend::init(const std::unordered_map<std::string, std::string>& conf
   velox::parquet::registerParquetReaderFactory();
   velox::parquet::registerParquetWriterFactory();
   std::string keytabPath = "";
-  std::string kmsUri = backendConf_->get<std::string>(kGlutenKMSUri, "kms://http@localhost:19717/kms");
+  std::string defaultKmsUri = "kms://http@localhost:19717/kms";
+  std::string kmsUri = backendConf_->get<std::string>(kGlutenKMSUri, defaultKmsUri);
   velox::parquet::initializeCryptoFactory(
       kmsUri, keytabPath, true, true);
   velox::orc::registerOrcReaderFactory();
