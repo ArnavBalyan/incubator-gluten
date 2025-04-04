@@ -21,6 +21,8 @@
 #include "velox/connectors/hive/HiveConfig.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
 #include "velox/exec/PlanNodeStats.h"
+#include "velox/common/security/Identity.h"
+
 
 using namespace facebook;
 
@@ -178,11 +180,13 @@ WholeStageResultIterator::WholeStageResultIterator(
 std::shared_ptr<velox::core::QueryCtx> WholeStageResultIterator::createNewVeloxQueryCtx() {
   std::unordered_map<std::string, std::shared_ptr<velox::config::ConfigBase>> connectorConfigs;
   connectorConfigs[kHiveConnectorId] = createConnectorConfig();
+  const auto& newUserName = veloxCfg_->get<std::string>(gluten::kUGIUserName);
   static std::atomic<uint32_t> vqId{0}; // Velox query ID, same with taskId.
   std::shared_ptr<velox::core::QueryCtx> ctx = velox::core::QueryCtx::create(
       nullptr,
       facebook::velox::core::QueryConfig{getQueryContextConf()},
       connectorConfigs,
+      facebook::velox::security::Identity{newUserName.value_or(""), {}},
       gluten::VeloxBackend::get()->getAsyncDataCache(),
       memoryManager_->getAggregateMemoryPool(),
       spillExecutor_.get(),

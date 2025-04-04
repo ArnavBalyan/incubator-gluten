@@ -217,6 +217,17 @@ target_link_libraries(velox PUBLIC gluten)
 # Requires VELOX_MONO_LIBRARY=ON when building Velox.
 import_library(facebook::velox ${VELOX_BUILD_PATH}/lib/libvelox.a)
 
+import_library(
+  facebook::velox_dwio_parquet_crypto
+  ${VELOX_BUILD_PATH}/velox/dwio/parquet/crypto/libvelox_dwio_parquet_crypto.a
+)
+
+target_link_libraries(velox PRIVATE
+  -Wl,--whole-archive
+    facebook::velox_dwio_parquet_crypto
+  -Wl,--no-whole-archive
+)
+
 if(BUILD_TESTS)
   add_duckdb()
 
