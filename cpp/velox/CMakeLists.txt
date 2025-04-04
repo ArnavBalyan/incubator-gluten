@@ -222,8 +222,6 @@ import_library(
   ${VELOX_BUILD_PATH}/velox/dwio/parquet/crypto/libvelox_dwio_parquet_crypto.a
 )
 
-target_link_libraries(velox PUBLIC facebook::velox)
-
 target_link_libraries(velox PRIVATE
   -Wl,--whole-archive
     facebook::velox_dwio_parquet_crypto
