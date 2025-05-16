@@ -313,6 +313,12 @@ find_package(
   ICU
   COMPONENTS i18n uc data
   REQUIRED)
+
+find_package(gRPC REQUIRED)
+target_link_libraries(velox PUBLIC gRPC::grpc++ gRPC::grpc)
+
+find_package(Protobuf REQUIRED)
+
 target_link_libraries(velox PUBLIC ICU::i18n ICU::uc ICU::data)
 
 if(BUILD_TESTS)
