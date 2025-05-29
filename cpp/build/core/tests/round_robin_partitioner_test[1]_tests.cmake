@@ -1,0 +1,7 @@
+add_test([=[RoundRobinPartitionerTest.TestInit]=]  /home/user/gluten/cpp/build/core/tests/round_robin_partitioner_test [==[--gtest_filter=RoundRobinPartitionerTest.TestInit]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[RoundRobinPartitionerTest.TestInit]=]  PROPERTIES WORKING_DIRECTORY /home/user/gluten/cpp/build/core/tests SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==])
+add_test([=[RoundRobinPartitionerTest.TestComoputeNormal]=]  /home/user/gluten/cpp/build/core/tests/round_robin_partitioner_test [==[--gtest_filter=RoundRobinPartitionerTest.TestComoputeNormal]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[RoundRobinPartitionerTest.TestComoputeNormal]=]  PROPERTIES WORKING_DIRECTORY /home/user/gluten/cpp/build/core/tests SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==])
+add_test([=[RoundRobinPartitionerTest.TestComoputeContinuous]=]  /home/user/gluten/cpp/build/core/tests/round_robin_partitioner_test [==[--gtest_filter=RoundRobinPartitionerTest.TestComoputeContinuous]==] --gtest_also_run_disabled_tests)
+set_tests_properties([=[RoundRobinPartitionerTest.TestComoputeContinuous]=]  PROPERTIES WORKING_DIRECTORY /home/user/gluten/cpp/build/core/tests SKIP_REGULAR_EXPRESSION [==[\[  SKIPPED \]]==])
+set(  round_robin_partitioner_test_TESTS RoundRobinPartitionerTest.TestInit RoundRobinPartitionerTest.TestComoputeNormal RoundRobinPartitionerTest.TestComoputeContinuous)

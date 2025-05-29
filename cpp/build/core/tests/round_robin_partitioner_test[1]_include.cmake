@@ -1,0 +1,5 @@
+if(EXISTS "/home/user/gluten/cpp/build/core/tests/round_robin_partitioner_test[1]_tests.cmake")
+  include("/home/user/gluten/cpp/build/core/tests/round_robin_partitioner_test[1]_tests.cmake")
+else()
+  add_test(round_robin_partitioner_test_NOT_BUILT round_robin_partitioner_test_NOT_BUILT)
+endif()

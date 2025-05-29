@@ -1,0 +1,2 @@
+ccache /usr/bin/ar qc libvelox_benchmark_common.a CMakeFiles/velox_benchmark_common.dir/common/BenchmarkUtils.cc.o
+ccache /usr/bin/ranlib libvelox_benchmark_common.a

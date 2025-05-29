@@ -1,0 +1,5 @@
+if(EXISTS "/home/user/gluten/cpp/build/core/tests/object_store_test[1]_tests.cmake")
+  include("/home/user/gluten/cpp/build/core/tests/object_store_test[1]_tests.cmake")
+else()
+  add_test(object_store_test_NOT_BUILT object_store_test_NOT_BUILT)
+endif()
