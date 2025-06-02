@@ -247,6 +247,7 @@ object VeloxBackendSettings extends BackendSettingsApi {
       case "ParquetFileFormat" => ReadFileFormat.ParquetReadFormat
       case "DwrfFileFormat" => ReadFileFormat.DwrfReadFormat
       case "CSVFileFormat" => ReadFileFormat.TextReadFormat
+      case "Spark33LegacyHoodieParquetFileFormat" => ReadFileFormat.ParquetReadFormat
       case _ => ReadFileFormat.UnknownFormat
     }
   }
