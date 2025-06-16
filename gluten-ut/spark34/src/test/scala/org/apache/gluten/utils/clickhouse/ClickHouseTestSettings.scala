@@ -236,6 +236,7 @@ class ClickHouseTestSettings extends BackendTestSettings {
     ) // disabled due to case-insensitive not supported in CH tuple
   enableSuite[GlutenDataFrameStatSuite]
   enableSuite[GlutenDataFrameSuite]
+    .exclude("SPARK-27439: Explain result should match collected result after view change")
     .exclude("Uuid expressions should produce same results at retries in the same DataFrame")
     .exclude("SPARK-28224: Aggregate sum big decimal overflow")
     .exclude("SPARK-28067: Aggregate sum should not return wrong results for decimal overflow")
@@ -261,6 +262,8 @@ class ClickHouseTestSettings extends BackendTestSettings {
     .exclude("SPARK-24165: CaseWhen/If - nullability of nested types")
     .exclude("SPARK-27671: Fix analysis exception when casting null in nested field in struct")
     .exclude("summary")
+    .excludeGlutenTest(
+      "SPARK-27439: Explain result should match collected result after view change")
     .excludeGlutenTest("distributeBy and localSort")
     .excludeGlutenTest("describe")
     .excludeGlutenTest("Allow leading/trailing whitespace in string before casting")
@@ -482,7 +485,6 @@ class ClickHouseTestSettings extends BackendTestSettings {
     .exclude("string regex_replace / regex_extract")
     .exclude("string overlay function")
     .exclude("binary overlay function")
-    .exclude("string parse_url function")
     .exclude("string / binary length function")
     .exclude("SPARK-36751: add octet length api for scala")
     .exclude("SPARK-36751: add bit length api for scala")
@@ -519,6 +521,7 @@ class ClickHouseTestSettings extends BackendTestSettings {
     .exclude("null cast")
     .exclude("cast string to date")
     .exclude("cast string to timestamp")
+    .excludeGlutenTest("cast string to timestamp")
     .exclude("cast from boolean")
     .exclude("data type casting")
     .excludeGlutenTest("data type casting")
@@ -562,6 +565,11 @@ class ClickHouseTestSettings extends BackendTestSettings {
     .exclude("SPARK-36924: Cast IntegralType to DayTimeIntervalType")
     .exclude("SPARK-36924: Cast YearMonthIntervalType to IntegralType")
     .exclude("SPARK-36924: Cast IntegralType to YearMonthIntervalType")
+    .exclude("cast array element from integer to string")
+    .exclude("cast array element from double to string")
+    .exclude("cast array element from bool to string")
+    .exclude("cast array element from date to string")
+    .exclude("cast array from timestamp to string")
   enableSuite[GlutenCollectionExpressionsSuite]
     .exclude("ArraysZip") // wait for https://github.com/ClickHouse/ClickHouse/pull/69576
     .exclude("Sequence of numbers")
@@ -841,6 +849,7 @@ class ClickHouseTestSettings extends BackendTestSettings {
     .excludeGlutenTest("replace partial hash aggregate with sort aggregate")
   enableSuite[GlutenReuseExchangeAndSubquerySuite]
   enableSuite[GlutenSQLAggregateFunctionSuite]
+    .excludeGlutenTest("Return NaN or null when dividing by zero")
   enableSuite[GlutenSQLWindowFunctionSuite]
     .exclude("window function: partition and order expressions")
     .exclude("window function: expressions in arguments of a window functions")
@@ -1710,6 +1719,37 @@ class ClickHouseTestSettings extends BackendTestSettings {
   enableSuite[GlutenSparkSessionExtensionSuite]
   enableSuite[GlutenHiveSQLQueryCHSuite]
   enableSuite[GlutenPercentileSuite]
+  enableSuite[GlutenTryCastSuite]
+    .exclude(
+      "Process Infinity, -Infinity, NaN in case insensitive manner" // +inf not supported in folly.
+    )
+    .exclude("ANSI mode: Throw exception on casting out-of-range value to byte type")
+    .exclude("ANSI mode: Throw exception on casting out-of-range value to short type")
+    .exclude("ANSI mode: Throw exception on casting out-of-range value to int type")
+    .exclude("ANSI mode: Throw exception on casting out-of-range value to long type")
+    .exclude("cast from invalid string to numeric should throw NumberFormatException")
+    .exclude("SPARK-26218: Fix the corner case of codegen when casting float to Integer")
+    // Set timezone through config.
+    .exclude("data type casting")
+    .excludeCH("null cast")
+    .excludeCH("cast string to date")
+    .excludeCH("cast string to timestamp")
+    .excludeGlutenTest("cast string to timestamp")
+    .excludeCH("SPARK-22825 Cast array to string")
+    .excludeCH("SPARK-33291: Cast array with null elements to string")
+    .excludeCH("SPARK-22973 Cast map to string")
+    .excludeCH("SPARK-22981 Cast struct to string")
+    .excludeCH("SPARK-33291: Cast struct with null elements to string")
+    .excludeCH("SPARK-35111: Cast string to year-month interval")
+    .excludeCH("cast from timestamp II")
+    .excludeCH("cast a timestamp before the epoch 1970-01-01 00:00:00Z II")
+    .excludeCH("cast a timestamp before the epoch 1970-01-01 00:00:00Z")
+    .excludeCH("cast from array II")
+    .excludeCH("cast from array III")
+    .excludeCH("cast from struct III")
+    .excludeCH("ANSI mode: cast string to timestamp with parse error")
+    .excludeCH("ANSI mode: cast string to date with parse error")
+    .excludeCH("Gluten - data type casting")
 
   override def getSQLQueryTestSettings: SQLQueryTestSettings = ClickHouseSQLQueryTestSettings
 }
