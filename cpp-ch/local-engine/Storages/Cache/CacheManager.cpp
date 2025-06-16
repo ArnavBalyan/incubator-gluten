@@ -122,7 +122,7 @@ Task CacheManager::cachePart(
             }
             auto query_info = buildQueryInfo(names_and_types_list);
             auto read_step = storage->reader.readFromParts(
-                selected_parts,
+                RangesInDataParts({selected_parts}),
                 storage->getMutationsSnapshot({}),
                 names_and_types_list.getNames(),
                 storage_snapshot,
@@ -234,7 +234,7 @@ JobId CacheManager::cacheFiles(substrait::ReadRel::LocalFiles file_infos)
         const Poco::URI file_uri(file_infos.items().Get(0).uri_file());
         const auto read_buffer_builder = ReadBufferBuilderFactory::instance().createBuilder(file_uri.getScheme(), context);
 
-        if (context->getConfigRef().getBool("gluten_cache.local.enabled", false))
+        if (context->getConfigRef().getBool(GlutenCacheConfig::ENABLED, false))
             for (const auto & file : file_infos.items())
                 job.addTask(cacheFile(file, read_buffer_builder));
         else

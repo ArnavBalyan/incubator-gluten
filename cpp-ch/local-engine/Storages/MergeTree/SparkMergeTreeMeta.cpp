@@ -115,7 +115,7 @@ doBuildMetadata(const DB::NamesAndTypesList & columns, const ContextPtr & contex
 
     setSecondaryIndex(columns, context, table, metadata);
 
-    metadata->partition_key.expression_list_ast = std::make_shared<ASTExpressionList>();
+    metadata->partition_key = KeyDescription::buildEmptyKey();
     metadata->sorting_key = KeyDescription::parse(table.order_by_key, metadata->getColumns(), context, true);
     if (table.primary_key.empty())
         if (table.order_by_key != MergeTreeTable::TUPLE)
@@ -212,9 +212,7 @@ MergeTreeTableInstance::MergeTreeTableInstance(const std::string & info) : Merge
     while (!in.eof())
     {
         MergeTreePart part;
-        std::string encoded_name;
-        readString(encoded_name, in);
-        Poco::URI::decode(encoded_name, part.name);
+        readString(part.name, in);
         assertChar('\n', in);
         readIntText(part.begin, in);
         assertChar('\n', in);
@@ -294,10 +292,7 @@ RangesInDataParts MergeTreeTableInstance::extractRange(DataPartsVector parts_vec
         std::inserter(ranges_in_data_parts, ranges_in_data_parts.end()),
         [&](const MergeTreePart & part)
         {
-            RangesInDataPart ranges_in_data_part;
-            ranges_in_data_part.data_part = name_index.at(part.name);
-            ranges_in_data_part.part_index_in_query = 0;
-            ranges_in_data_part.ranges.emplace_back(MarkRange(part.begin, part.end));
+            RangesInDataPart ranges_in_data_part{name_index.at(part.name), 0, 0, {MarkRange(part.begin, part.end)}};
             return ranges_in_data_part;
         });
     return ranges_in_data_parts;
