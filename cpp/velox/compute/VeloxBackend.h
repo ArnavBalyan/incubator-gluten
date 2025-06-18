@@ -75,7 +75,6 @@ class VeloxBackend {
       }
       asyncDataCache_->shutdown();
     }
-    facebook::velox::parquet::shutdownCryptoFactory();
   }
 
  private:
