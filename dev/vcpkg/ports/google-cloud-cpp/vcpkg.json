@@ -1,0 +1,22 @@
+{
+    "name": "google-cloud-cpp",
+    "version": "1000.0.0+arnavb",
+    "description": "Custom GCS client fork",
+    "dependencies": [
+        "grpc",
+        {
+          "name": "vcpkg-cmake",
+          "host": true
+        },
+        {
+          "name": "vcpkg-cmake-config",
+          "host": true
+        }
+      ],
+    "features": {
+      "storage": {
+        "description": "Enable GCS storage library",
+        "dependencies": []
+      }
+    }
+  }

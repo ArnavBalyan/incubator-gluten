@@ -114,7 +114,8 @@ macro(find_awssdk)
 endmacro()
 
 macro(find_gcssdk)
-  find_package(google_cloud_cpp_storage CONFIG 2.22.0 REQUIRED)
+  message(STATUS "finding gcs 2.22.0 from cpp/velox in gluten")
+  find_package(google_cloud_cpp_storage CONFIG REQUIRED)
 endmacro()
 
 macro(find_azure)
