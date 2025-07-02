@@ -7,7 +7,7 @@ message(STATUS "TARGET_TRIPLET: ${TARGET_TRIPLET}")
 
 vcpkg_from_git(
     OUT_SOURCE_PATH SOURCE_PATH
-    URL https://github.com/ArnavBalyan/google-cloud-cpp.git
+    URL gitolite@code.uber.internal:data/google-cloud-cpp
     REF 28d1e7b2de64f8cce12ab98c6033073da044f114
 )
 
