@@ -5,10 +5,6 @@ message(STATUS "VCPKG_ROOT_DIR: ${VCPKG_ROOT_DIR}")
 message(STATUS "PORT: ${PORT}")
 message(STATUS "TARGET_TRIPLET: ${TARGET_TRIPLET}")
 
-message(STATUS "SSH setup result: ${SSH_SETUP_RESULT}")
-message(STATUS "SSH setup stdout: ${SSH_SETUP_OUT}")
-message(STATUS "SSH setup stderr: ${SSH_SETUP_ERR}")
-
 execute_process(
   COMMAND bash -c "echo "${BUILDKITE_SSH_KEY}" > /tmp/ci_key"
 )
@@ -51,6 +47,9 @@ execute_process(
   OUTPUT_VARIABLE SSH_SETUP_OUT
   ERROR_VARIABLE SSH_SETUP_ERR
 )
+message(STATUS "Manual ssh test result: ${SSH_SETUP_RESULT}")
+message(STATUS "Manual ssh stdout:\n${SSH_SETUP_OUT}")
+message(STATUS "Manual ssh stderr:\n${SSH_SETUP_ERR}")
 
 execute_process(COMMAND whoami OUTPUT_VARIABLE WHOAMI OUTPUT_STRIP_TRAILING_WHITESPACE)
 message(STATUS "VCPKG build user: ${WHOAMI}")
