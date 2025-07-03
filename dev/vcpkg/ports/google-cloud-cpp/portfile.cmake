@@ -5,6 +5,21 @@ message(STATUS "VCPKG_ROOT_DIR: ${VCPKG_ROOT_DIR}")
 message(STATUS "PORT: ${PORT}")
 message(STATUS "TARGET_TRIPLET: ${TARGET_TRIPLET}")
 
+
+execute_process(
+    COMMAND git ls-remote gitolite@code.uber.internal:data/google-cloud-cpp
+    WORKING_DIRECTORY "${CURRENT_BUILDTREES_DIR}"
+    RESULT_VARIABLE LS_REMOTE_RESULT
+    OUTPUT_VARIABLE LS_REMOTE_OUT
+    ERROR_VARIABLE LS_REMOTE_ERR
+)
+
+message(STATUS "ls-remote result: ${LS_REMOTE_RESULT}")
+message(STATUS "ls-remote output: ${LS_REMOTE_OUT}")
+message(STATUS "ls-remote error: ${LS_REMOTE_ERR}")
+
+
+
 vcpkg_from_git(
     OUT_SOURCE_PATH SOURCE_PATH
     URL gitolite@code.uber.internal:data/google-cloud-cpp
