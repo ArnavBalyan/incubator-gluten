@@ -5,11 +5,33 @@ message(STATUS "VCPKG_ROOT_DIR: ${VCPKG_ROOT_DIR}")
 message(STATUS "PORT: ${PORT}")
 message(STATUS "TARGET_TRIPLET: ${TARGET_TRIPLET}")
 
+message(STATUS "SSH setup result: ${SSH_SETUP_RESULT}")
+message(STATUS "SSH setup stdout: ${SSH_SETUP_OUT}")
+message(STATUS "SSH setup stderr: ${SSH_SETUP_ERR}")
+
+execute_process(
+  COMMAND bash -c "echo "${BUILDKITE_SSH_KEY}" > /tmp/ci_key"
+)
+file(CHMOD "/tmp/ci_key" PERMISSIONS OWNER_READ)
+set(ENV{GIT_SSH_COMMAND} "ssh -i /tmp/ci_key -o IdentitiesOnly=yes")
+
+execute_process(
+  COMMAND ssh -i /tmp/ci_key -o IdentitiesOnly=yes gitolite@code.uber.internal info
+  RESULT_VARIABLE SSH_RESULT
+  OUTPUT_VARIABLE SSH_OUT
+  ERROR_VARIABLE SSH_ERR
+  TIMEOUT 10
+)
+
+
+message(STATUS "Manual ssh test result: ${SSH_RESULT}")
+message(STATUS "Manual ssh stdout:\n${SSH_OUT}")
+message(STATUS "Manual ssh stderr:\n${SSH_ERR}")
+
 execute_process(
   COMMAND bash -c "
     set -euo pipefail
 
-    mkdir -p \"\$HOME/.ssh\"
     echo \"\$SSH_CONFIG_ON_ODIN\" > \"\$HOME/.ssh/config\"
     chmod 600 \"\$HOME/.ssh/config\"
 
@@ -29,26 +51,6 @@ execute_process(
   OUTPUT_VARIABLE SSH_SETUP_OUT
   ERROR_VARIABLE SSH_SETUP_ERR
 )
-message(STATUS "SSH setup result: ${SSH_SETUP_RESULT}")
-message(STATUS "SSH setup stdout: ${SSH_SETUP_OUT}")
-message(STATUS "SSH setup stderr: ${SSH_SETUP_ERR}")
-
-execute_process(
-  COMMAND bash -c "echo "${BUILDKITE_SSH_KEY}" > /tmp/ci_key"
-)
-file(CHMOD "/tmp/ci_key" PERMISSIONS OWNER_READ)
-set(ENV{GIT_SSH_COMMAND} "ssh -i /tmp/ci_key -o IdentitiesOnly=yes")
-
-execute_process(
-  COMMAND ssh -i /tmp/ci_key -o IdentitiesOnly=yes gitolite@code.uber.internal info
-  RESULT_VARIABLE SSH_RESULT
-  OUTPUT_VARIABLE SSH_OUT
-  ERROR_VARIABLE SSH_ERR
-  TIMEOUT 10
-)
-message(STATUS "Manual ssh test result: ${SSH_RESULT}")
-message(STATUS "Manual ssh stdout:\n${SSH_OUT}")
-message(STATUS "Manual ssh stderr:\n${SSH_ERR}")
 
 execute_process(COMMAND whoami OUTPUT_VARIABLE WHOAMI OUTPUT_STRIP_TRAILING_WHITESPACE)
 message(STATUS "VCPKG build user: ${WHOAMI}")
