@@ -8,6 +8,17 @@ file(WRITE "/tmp/ci_key" "$ENV{BUILDKITE_GIT_SSH_PRIVATE_KEY}")
 file(CHMOD "/tmp/ci_key" PERMISSIONS OWNER_READ)
 set(ENV{GIT_SSH_COMMAND} "ssh -i /tmp/ci_key -o IdentitiesOnly=yes")
 
+execute_process(
+  COMMAND ssh -i /tmp/ci_key -o IdentitiesOnly=yes gitolite@code.uber.internal info
+  RESULT_VARIABLE SSH_RESULT
+  OUTPUT_VARIABLE SSH_OUT
+  ERROR_VARIABLE SSH_ERR
+  TIMEOUT 10
+)
+message(STATUS "Manual ssh test result: ${SSH_RESULT}")
+message(STATUS "Manual ssh stdout:\n${SSH_OUT}")
+message(STATUS "Manual ssh stderr:\n${SSH_ERR}")
+
 execute_process(COMMAND whoami OUTPUT_VARIABLE WHOAMI OUTPUT_STRIP_TRAILING_WHITESPACE)
 message(STATUS "VCPKG build user: ${WHOAMI}")
 
