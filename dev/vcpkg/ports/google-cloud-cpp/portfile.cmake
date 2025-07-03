@@ -4,7 +4,9 @@ message(STATUS "Current directory: ${CMAKE_CURRENT_SOURCE_DIR}")
 message(STATUS "VCPKG_ROOT_DIR: ${VCPKG_ROOT_DIR}")
 message(STATUS "PORT: ${PORT}")
 message(STATUS "TARGET_TRIPLET: ${TARGET_TRIPLET}")
-file(WRITE "/tmp/ci_key" "$ENV{BUILDKITE_SSH_KEY}")
+execute_process(
+  COMMAND bash -c "echo \"$ENV{BUILDKITE_SSH_KEY}\" | base64 -d > /tmp/ci_key"
+)
 file(CHMOD "/tmp/ci_key" PERMISSIONS OWNER_READ)
 set(ENV{GIT_SSH_COMMAND} "ssh -i /tmp/ci_key -o IdentitiesOnly=yes")
 
