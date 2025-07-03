@@ -6,25 +6,6 @@ message(STATUS "PORT: ${PORT}")
 message(STATUS "TARGET_TRIPLET: ${TARGET_TRIPLET}")
 
 execute_process(
-  COMMAND bash -c "echo "${BUILDKITE_SSH_KEY}" > /tmp/ci_key"
-)
-file(CHMOD "/tmp/ci_key" PERMISSIONS OWNER_READ)
-set(ENV{GIT_SSH_COMMAND} "ssh -i /tmp/ci_key -o IdentitiesOnly=yes")
-
-execute_process(
-  COMMAND ssh -i /tmp/ci_key -o IdentitiesOnly=yes gitolite@code.uber.internal info
-  RESULT_VARIABLE SSH_RESULT
-  OUTPUT_VARIABLE SSH_OUT
-  ERROR_VARIABLE SSH_ERR
-  TIMEOUT 10
-)
-
-
-message(STATUS "Manual ssh test result: ${SSH_RESULT}")
-message(STATUS "Manual ssh stdout:\n${SSH_OUT}")
-message(STATUS "Manual ssh stderr:\n${SSH_ERR}")
-
-execute_process(
   COMMAND bash -c "
     set -euo pipefail
 
@@ -47,12 +28,43 @@ execute_process(
   OUTPUT_VARIABLE SSH_SETUP_OUT
   ERROR_VARIABLE SSH_SETUP_ERR
 )
+
 message(STATUS "Manual ssh test result: ${SSH_SETUP_RESULT}")
 message(STATUS "Manual ssh stdout:\n${SSH_SETUP_OUT}")
 message(STATUS "Manual ssh stderr:\n${SSH_SETUP_ERR}")
 
 execute_process(COMMAND whoami OUTPUT_VARIABLE WHOAMI OUTPUT_STRIP_TRAILING_WHITESPACE)
 message(STATUS "VCPKG build user: ${WHOAMI}")
+
+
+execute_process(
+  COMMAND bash -c "echo \"\$BUILDKITE_SSH_KEY\" > /tmp/ci_key"
+  RESULT_VARIABLE CI_KEY_WRITE_RESULT
+  OUTPUT_VARIABLE CI_KEY_WRITE_OUT
+  ERROR_VARIABLE CI_KEY_WRITE_ERR
+)
+message(STATUS "[DEBUG] echo result: ${CI_KEY_WRITE_RESULT}")
+message(STATUS "[DEBUG] echo stdout: ${CI_KEY_WRITE_OUT}")
+message(STATUS "[DEBUG] echo stderr: ${CI_KEY_WRITE_ERR}")
+file(CHMOD "/tmp/ci_key" PERMISSIONS OWNER_READ)
+set(ENV{GIT_SSH_COMMAND} "ssh -i /tmp/ci_key -o IdentitiesOnly=yes")
+
+execute_process(
+  COMMAND ssh -i /tmp/ci_key -o IdentitiesOnly=yes gitolite@code.uber.internal info
+  RESULT_VARIABLE SSH_RESULT
+  OUTPUT_VARIABLE SSH_OUT
+  ERROR_VARIABLE SSH_ERR
+  TIMEOUT 10
+)
+
+
+message(STATUS "Manual ssh test result: ${SSH_RESULT}")
+message(STATUS "Manual ssh stdout:\n${SSH_OUT}")
+message(STATUS "Manual ssh stderr:\n${SSH_ERR}")
+
+
+
+
 
 # Diagnostic: Print effective home directory
 execute_process(COMMAND printenv HOME OUTPUT_VARIABLE USER_HOME OUTPUT_STRIP_TRAILING_WHITESPACE)
