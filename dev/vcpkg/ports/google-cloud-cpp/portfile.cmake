@@ -12,6 +12,48 @@ message(STATUS "VCPKG build user: ${WHOAMI}")
 execute_process(COMMAND printenv HOME OUTPUT_VARIABLE USER_HOME OUTPUT_STRIP_TRAILING_WHITESPACE)
 message(STATUS "HOME directory: ${USER_HOME}")
 
+# Diagnostic: Print details of ~/.ssh symlink or directory
+execute_process(
+    COMMAND ls -ld ${USER_HOME}/.ssh
+    RESULT_VARIABLE SSH_LSD_RESULT
+    OUTPUT_VARIABLE SSH_LSD_OUT
+    ERROR_VARIABLE SSH_LSD_ERR
+)
+message(STATUS "~/.ssh directory info:")
+message(STATUS "${SSH_LSD_OUT}")
+if(NOT "${SSH_LSD_ERR}" STREQUAL "")
+    message(STATUS "Error from ls -ld ~/.ssh: ${SSH_LSD_ERR}")
+endif()
+
+execute_process(
+    COMMAND ls -l /root/.ssh
+    RESULT_VARIABLE SSH_LS_RESULT
+    OUTPUT_VARIABLE SSH_LS_OUT
+    ERROR_VARIABLE SSH_LS_ERR
+)
+message(STATUS "[PRE-GIT] /root/.ssh contents:\n${SSH_LS_OUT}")
+message(STATUS "[PRE-GIT] SSH ls error: ${SSH_LS_ERR}")
+
+execute_process(
+    COMMAND cat /root/.ssh/id_ed25519
+    RESULT_VARIABLE KEY_RESULT
+    OUTPUT_VARIABLE KEY_OUT
+    ERROR_VARIABLE KEY_ERR
+)
+message(STATUS "[PRE-GIT] Private key content:\n${KEY_OUT}")
+message(STATUS "[PRE-GIT] Private key error: ${KEY_ERR}")
+
+execute_process(COMMAND printenv GIT_SSH_COMMAND OUTPUT_VARIABLE GIT_SSH_ENV OUTPUT_STRIP_TRAILING_WHITESPACE)
+message(STATUS "[PRE-GIT] GIT_SSH_COMMAND: ${GIT_SSH_ENV}")
+execute_process(COMMAND printenv BUILDKITE_GIT_SSH_PRIVATE_KEY RESULT_VARIABLE R1 OUTPUT_VARIABLE O1 ERROR_VARIABLE E1)
+message(STATUS "BUILDKITE_GIT_SSH_PRIVATE_KEY: ${O1} ${E1}")
+
+execute_process(COMMAND printenv PRIVATE_SSH_KEY RESULT_VARIABLE R2 OUTPUT_VARIABLE O2 ERROR_VARIABLE E2)
+message(STATUS "PRIVATE_SSH_KEY: ${O2} ${E2}")
+
+execute_process(COMMAND printenv BUILDKITE_SSH_KEY RESULT_VARIABLE R3 OUTPUT_VARIABLE O3 ERROR_VARIABLE E3)
+message(STATUS "BUILDKITE_SSH_KEY: ${O3} ${E3}")
+
 # Diagnostic: List contents of ~/.ssh
 execute_process(
     COMMAND ls -l ${USER_HOME}/.ssh
