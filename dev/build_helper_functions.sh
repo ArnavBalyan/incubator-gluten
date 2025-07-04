@@ -114,7 +114,7 @@ function gitolite_checkout {
   SUDO="${SUDO:-""}"
   cd "${DEPENDENCY_DIR}"
   if [ -z "${DIRNAME}" ]; then
-    echo "Failed to get repo name from ${REPO}"
+    echo "Failed to get gitolite repo name from ${REPO}"
     exit 1
   fi
   if [ -d "${DIRNAME}" ] && prompt "${DIRNAME} already exists. Delete?"; then

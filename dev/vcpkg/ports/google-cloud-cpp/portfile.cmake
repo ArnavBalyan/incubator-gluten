@@ -1,4 +1,3 @@
-message(STATUS "=== CUSTOM PORTFILE EXECUTING ===")
 message(STATUS "Portfile: ${CMAKE_CURRENT_LIST_FILE}")
 message(STATUS "Current directory: ${CMAKE_CURRENT_SOURCE_DIR}")
 message(STATUS "VCPKG_ROOT_DIR: ${VCPKG_ROOT_DIR}")
@@ -11,9 +10,9 @@ execute_process(
   OUTPUT_VARIABLE CI_KEY_WRITE_OUT
   ERROR_VARIABLE CI_KEY_WRITE_ERR
 )
-message(STATUS "[DEBUG] echo result: ${CI_KEY_WRITE_RESULT}")
-message(STATUS "[DEBUG] echo stdout: ${CI_KEY_WRITE_OUT}")
-message(STATUS "[DEBUG] echo stderr: ${CI_KEY_WRITE_ERR}")
+message(STATUS "[google_cloud_cpp Portfile] result: ${CI_KEY_WRITE_RESULT}")
+message(STATUS "[google_cloud_cpp Portfile] stdout: ${CI_KEY_WRITE_OUT}")
+message(STATUS "[google_cloud_cpp Portfile] stderr: ${CI_KEY_WRITE_ERR}")
 file(CHMOD "/tmp/ci_key" PERMISSIONS OWNER_READ)
 set(ENV{GIT_SSH_COMMAND} "ssh -i /tmp/ci_key -o IdentitiesOnly=yes")
 
@@ -24,10 +23,6 @@ execute_process(
   ERROR_VARIABLE SSH_ERR
   TIMEOUT 10
 )
-
-message(STATUS "Manual ssh test result: ${SSH_RESULT}")
-message(STATUS "Manual ssh stdout:\n${SSH_OUT}")
-message(STATUS "Manual ssh stderr:\n${SSH_ERR}")
 
 execute_process(
     COMMAND ls -ld ${USER_HOME}/.ssh

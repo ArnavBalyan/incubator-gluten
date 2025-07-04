@@ -112,6 +112,6 @@
   "overrides": [
     { "name": "fmt", "version": "10.1.1" },
     { "name": "xsimd", "version": "10.0.0" },
-    { "name": "google-cloud-cpp", "version": "1000.0.0+arnavb"}
+    { "name": "google-cloud-cpp", "version": "2.22.0-uber-internal"}
   ]
 }

@@ -1,6 +1,6 @@
 {
     "name": "google-cloud-cpp",
-    "version": "1000.0.0+arnavb",
+    "version": "2.22.0-uber-internal",
     "description": "Custom GCS client fork",
     "dependencies": [
         "grpc",
