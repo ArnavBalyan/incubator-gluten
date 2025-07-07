@@ -1,0 +1,22 @@
+{
+    "name": "google-cloud-cpp",
+    "version": "2.22.0-uber-internal",
+    "description": "Custom GCS client fork",
+    "dependencies": [
+        "grpc",
+        {
+          "name": "vcpkg-cmake",
+          "host": true
+        },
+        {
+          "name": "vcpkg-cmake-config",
+          "host": true
+        }
+      ],
+    "features": {
+      "storage": {
+        "description": "Enable GCS storage library",
+        "dependencies": []
+      }
+    }
+  }

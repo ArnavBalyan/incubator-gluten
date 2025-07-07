@@ -104,6 +104,28 @@ function github_checkout {
   cd "${DIRNAME}"
 }
 
+function gitolite_checkout {
+  local REPO=$1
+  shift
+  local VERSION=$1
+  shift
+  local GIT_CLONE_PARAMS=$@
+  local DIRNAME=$(basename $REPO)
+  SUDO="${SUDO:-""}"
+  cd "${DEPENDENCY_DIR}"
+  if [ -z "${DIRNAME}" ]; then
+    echo "Failed to get gitolite repo name from ${REPO}"
+    exit 1
+  fi
+  if [ -d "${DIRNAME}" ] && prompt "${DIRNAME} already exists. Delete?"; then
+    ${SUDO} rm -rf "${DIRNAME}"
+  fi
+  if [ ! -d "${DIRNAME}" ]; then
+    git clone -q -b $VERSION $GIT_CLONE_PARAMS "gitolite@code.uber.internal:${REPO}.git"
+  fi
+  cd "${DIRNAME}"
+}
+
 function wget_and_untar {
   local URL=$1
   local DIR=$2
