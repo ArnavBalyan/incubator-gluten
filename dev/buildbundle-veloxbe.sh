@@ -20,15 +20,15 @@ source "$BASEDIR/builddeps-veloxbe.sh"
 
 function build_for_spark {
   spark_version=$1
-  mvn clean package -Pbackends-velox -Pspark-$spark_version -DskipTests
+  mvn -s $BASEDIR/settings.xml clean package -Pbackends-velox -Pspark-$spark_version -DskipTests
 }
 
 function check_supported {
-  PLATFORM=$(mvn help:evaluate -Dexpression=platform -q -DforceStdout)
-  ARCH=$(mvn help:evaluate -Dexpression=arch -q -DforceStdout)
+  PLATFORM=$(mvn -s $BASEDIR/settings.xml help:evaluate -Dexpression=platform -q -DforceStdout)
+  ARCH=$(mvn -s $BASEDIR/settings.xml help:evaluate -Dexpression=arch -q -DforceStdout)
   if [ "$PLATFORM" == "null object or invalid expression" ] || [ "$ARCH" == "null object or invalid expression" ]; then
-    OS_NAME=$(mvn help:evaluate -Dexpression=os.name -q -DforceStdout)
-    OS_ARCH=$(mvn help:evaluate -Dexpression=os.arch -q -DforceStdout)
+    OS_NAME=$(mvn -s $BASEDIR/settings.xml help:evaluate -Dexpression=os.name -q -DforceStdout)
+    OS_ARCH=$(mvn -s $BASEDIR/settings.xml help:evaluate -Dexpression=os.arch -q -DforceStdout)
     echo "$OS_NAME-$OS_ARCH is not supported by current Gluten build."
     exit 1
   fi

@@ -19,4 +19,4 @@ BASEDIR=$(dirname $0)
 source "$BASEDIR/builddeps-veloxbe.sh"
 pwd
 
-mvn clean package -Pbackends-velox -Pceleborn -Pspark-3.3 -DskipTests -e
+mvn -s $BASEDIR/settings.xml clean package -Pbackends-velox -Pceleborn -Pspark-3.3 -DskipTests -e

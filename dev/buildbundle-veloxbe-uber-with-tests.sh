@@ -12,4 +12,5 @@ echo "Important Env vars; check them below to be doubly sure"
 printenv | grep "MAVEN_OPTS"
 printenv | grep "JAVA_HOME"
 
-mvn clean package -Pbackends-velox -Pceleborn -Pspark-3.3 -e
+BASEDIR=$(dirname $0)
+mvn -s $BASEDIR/settings.xml clean package -Pbackends-velox -Pceleborn -Pspark-3.3 -e

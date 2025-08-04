@@ -83,23 +83,23 @@ function build_arrow_java() {
 
     pushd $ARROW_PREFIX/java
     # Because arrow-bom module need the -DprocessAllModules
-    mvn versions:set -DnewVersion=15.0.0-gluten -DprocessAllModules
+    mvn -s $CURRENT_DIR/settings.xml versions:set -DnewVersion=15.0.0-gluten -DprocessAllModules
 
-    mvn clean install -pl bom,maven/module-info-compiler-maven-plugin,vector -am \
+    mvn -s $CURRENT_DIR/settings.xml clean install -pl bom,maven/module-info-compiler-maven-plugin,vector -am \
           -DskipTests -Drat.skip -Dmaven.gitcommitid.skip -Dcheckstyle.skip -Dassembly.skipAssembly
 
     # Arrow C Data Interface CPP libraries
-    mvn generate-resources -P generate-libs-cdata-all-os -Darrow.c.jni.dist.dir=$ARROW_INSTALL_DIR \
+    mvn -s $CURRENT_DIR/settings.xml generate-resources -P generate-libs-cdata-all-os -Darrow.c.jni.dist.dir=$ARROW_INSTALL_DIR \
       -Dmaven.test.skip -Drat.skip -Dmaven.gitcommitid.skip -Dcheckstyle.skip -N
 
     # Arrow JNI Date Interface CPP libraries
     export PKG_CONFIG_PATH=/usr/local/lib64/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}
-    mvn generate-resources -Pgenerate-libs-jni-macos-linux -N -Darrow.dataset.jni.dist.dir=$ARROW_INSTALL_DIR \
+    mvn -s $CURRENT_DIR/settings.xml generate-resources -Pgenerate-libs-jni-macos-linux -N -Darrow.dataset.jni.dist.dir=$ARROW_INSTALL_DIR \
       -DARROW_GANDIVA=OFF -DARROW_JAVA_JNI_ENABLE_GANDIVA=OFF -DARROW_ORC=OFF -DARROW_JAVA_JNI_ENABLE_ORC=OFF \
 	    -Dmaven.test.skip -Drat.skip -Dmaven.gitcommitid.skip -Dcheckstyle.skip -N
 
     # Arrow Java libraries
-    mvn install -Parrow-jni -P arrow-c-data -pl c,dataset -am \
+    mvn -s $CURRENT_DIR/settings.xml install -Parrow-jni -P arrow-c-data -pl c,dataset -am \
       -Darrow.c.jni.dist.dir=$ARROW_INSTALL_DIR/lib -Darrow.dataset.jni.dist.dir=$ARROW_INSTALL_DIR/lib -Darrow.cpp.build.dir=$ARROW_INSTALL_DIR/lib \
       -Dmaven.test.skip -Drat.skip -Dmaven.gitcommitid.skip -Dcheckstyle.skip -Dassembly.skipAssembly
     popd
