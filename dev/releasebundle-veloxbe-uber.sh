@@ -23,7 +23,7 @@ new_gluten_version=1.3.0-${gluten_sha}-${velox_sha}
 find ./* -name "*.xml" -type f -exec sed -i "s/${old_gluten_version}/${new_gluten_version}/g" {} +
 
 # the deploy
-mvn clean package -Pbackends-velox -Pceleborn -Pspark-3.3 -DskipTests -e
+mvn -s ./dev/settings.xml clean package -Pbackends-velox -Pceleborn -Pspark-3.3 -DskipTests -e
 echo "Built jars successfully!"
 du -sh package/target/*
 mvn -s ./dev/settings.xml deploy -Pbackends-velox -Pceleborn -Pspark-3.3 -DskipTests -e
